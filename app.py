@@ -3701,7 +3701,7 @@ class AdvancedDataFetcher:
             (n_tickers, n_ret)
         )
 
-# Apply correlation
+        # Apply correlation
         correlated_returns = L @ uncorrelated_returns
         
         # Add autocorrelation and volatility clustering
@@ -3738,7 +3738,7 @@ class AdvancedDataFetcher:
         if n_ret > 0:
             prices[:, 1:] = base_prices[:, None] * np.exp(np.cumsum(correlated_returns, axis=1))
 
-# Create DataFrames
+        # Create DataFrames
         price_df = pd.DataFrame(
             prices.T,
             index=date_range,
@@ -3773,7 +3773,7 @@ class AdvancedDataFetcher:
 
             volumes[:, i] = volumes[:, i] * vol_factor
 
-volume_df = pd.DataFrame(
+        volume_df = pd.DataFrame(
             volumes,
             index=date_range,
             columns=tickers
@@ -3796,9 +3796,9 @@ volume_df = pd.DataFrame(
             'status': 'synthetic'
         }
 
-# ─────────────────────────────────────────────────────────────────────────────
-# ADVANCED PORTFOLIO OPTIMIZATION ENGINE
-# ─────────────────────────────────────────────────────────────────────────────
+        # ─────────────────────────────────────────────────────────────────────────────
+        # ADVANCED PORTFOLIO OPTIMIZATION ENGINE
+        # ─────────────────────────────────────────────────────────────────────────────
 
 class AdvancedPortfolioOptimizer:
     """
