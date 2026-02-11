@@ -22,6 +22,7 @@
 
 import warnings
 import streamlit as st
+import streamlit.components.v1 as components
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -73,6 +74,17 @@ except Exception as _e:
     CLA = EfficientCVaR = HRPOpt = EfficientSemivariance = None
     objective_functions = None
     DiscreteAllocation = get_latest_prices = None
+
+# QuantStats (optional but recommended for professional performance tear sheets)
+try:
+    import quantstats as qs
+    HAS_QUANTSTATS = True
+    QUANTSTATS_IMPORT_ERROR = ""
+except Exception as _e:
+    qs = None
+    HAS_QUANTSTATS = False
+    QUANTSTATS_IMPORT_ERROR = str(_e)
+
 
 
 # Financial Econometrics
@@ -5475,6 +5487,9 @@ class AdvancedVisualizationEngine:
     
     def __init__(self):
         self.theme = PLOTLY_THEME
+        # Prevent Plotly update_layout(title=...) collisions with theme['title']
+        self.theme_no_title = {k: v for k, v in PLOTLY_THEME.items() if k != 'title'}
+        self.title_style = PLOTLY_THEME.get('title', {})
         self.palette = PALETTE
         
     def plot_efficient_frontier_3d(self, optimizer: AdvancedPortfolioOptimizer,
@@ -5588,7 +5603,7 @@ class AdvancedVisualizationEngine:
         
         # Update layout
         fig.update_layout(
-            title='3D Efficient Frontier Analysis',
+            title=dict(text='3D Efficient Frontier Analysis', **self.title_style),
             scene=dict(
                 xaxis_title='Annual Volatility',
                 yaxis_title='Annual Return',
@@ -5601,7 +5616,7 @@ class AdvancedVisualizationEngine:
                 )
             ),
             height=800,
-            **self.theme
+            **self.theme_no_title
         )
         
         return fig
@@ -5770,10 +5785,10 @@ class AdvancedVisualizationEngine:
         
         # Update layout
         fig.update_layout(
-            title='Portfolio Allocation Analysis',
+            title=dict(text='Portfolio Allocation Analysis', **self.title_style),
             height=800,
             showlegend=False,
-            **self.theme
+            **self.theme_no_title
         )
         
         # Update axes
@@ -5976,7 +5991,7 @@ class AdvancedVisualizationEngine:
         
         # Update layout
         fig.update_layout(
-            title='Risk Metrics Dashboard',
+            title=dict(text='Risk Metrics Dashboard', **self.title_style),
             height=900,
             showlegend=True,
             legend=dict(
@@ -5986,7 +6001,7 @@ class AdvancedVisualizationEngine:
                 xanchor='right',
                 x=1
             ),
-            **self.theme
+            **self.theme_no_title
         )
         
         # Update axes
@@ -6227,7 +6242,7 @@ class AdvancedVisualizationEngine:
                 xanchor='right',
                 x=1
             ),
-            **self.theme
+            **self.theme_no_title
         )
         
         # Update axes
@@ -6349,7 +6364,7 @@ class AdvancedVisualizationEngine:
         
         # Update layout
         fig.update_layout(
-            title='Stress Testing Analysis',
+            title=dict(text='Stress Testing Analysis', **self.title_style),
             height=800,
             showlegend=True,
             legend=dict(
@@ -6359,7 +6374,7 @@ class AdvancedVisualizationEngine:
                 xanchor='right',
                 x=1
             ),
-            **self.theme
+            **self.theme_no_title
         )
         
         # Update axes
@@ -6418,11 +6433,11 @@ class AdvancedVisualizationEngine:
         
         # Update layout
         fig.update_layout(
-            title='Asset Correlation Matrix (Hierarchically Clustered)',
+            title=dict(text='Asset Correlation Matrix (Hierarchically Clustered)', **self.title_style),
             height=600,
             xaxis_title='Asset',
             yaxis_title='Asset',
-            **self.theme
+            **self.theme_no_title
         )
         
         # Update axes
@@ -6584,7 +6599,7 @@ class AdvancedVisualizationEngine:
         
         # Update layout
         fig.update_layout(
-            title='Performance Attribution Analysis',
+            title=dict(text='Performance Attribution Analysis', **self.title_style),
             height=800,
             showlegend=True,
             legend=dict(
@@ -6594,7 +6609,7 @@ class AdvancedVisualizationEngine:
                 xanchor='right',
                 x=1
             ),
-            **self.theme
+            **self.theme_no_title
         )
         
         # Update axes
@@ -7750,7 +7765,8 @@ HAS_REPORTLAB={HAS_REPORTLAB}
         "📈 Risk Analytics",
         "🎲 Monte Carlo",
         "🌪️ Stress Testing",
-        "🔗 Correlations"
+        "🔗 Correlations",
+        "📑 QuantStats Tearsheet"
     ])
     
     with viz_tabs[0]:
@@ -7957,6 +7973,93 @@ HAS_REPORTLAB={HAS_REPORTLAB}
             • Diversification Ratio: {metrics.diversification_ratio:.2f}
             """)
     
+    with viz_tabs[5]:
+        # QuantStats Tearsheet
+        st.markdown("#### QuantStats Portfolio Performance Tearsheet")
+        
+        if not HAS_QUANTSTATS or qs is None:
+            st.error("QuantStats is not installed or failed to import. Please ensure **quantstats** is in requirements.txt.")
+            st.code(f"Import error: {QUANTSTATS_IMPORT_ERROR}")
+        else:
+            qs_portfolio_returns = optimizer._calculate_portfolio_returns(weights)
+            
+            qs_benchmark_series = None
+            try:
+                if not benchmark_returns.empty:
+                    _bc = benchmark_returns.columns[0]
+                    qs_benchmark_series = benchmark_returns[_bc]
+            except Exception:
+                qs_benchmark_series = None
+            
+            metrics_df = _qs_metrics_table(qs_portfolio_returns, qs_benchmark_series, rf_annual=risk_free_rate)
+            if "Error" in metrics_df.columns:
+                st.warning(metrics_df["Error"].iloc[0])
+            else:
+                st.markdown("##### Key Performance & Risk Ratios (QuantStats)")
+                st.dataframe(metrics_df, use_container_width=True, hide_index=True)
+            
+            st.markdown('---')
+            st.markdown("##### QuantStats Advanced Charts")
+            col_qs1, col_qs2 = st.columns(2)
+            with col_qs1:
+                show_cum = st.checkbox("Cumulative Returns", value=True, key="qs_show_cum")
+                show_dd = st.checkbox("Drawdown", value=True, key="qs_show_dd")
+            with col_qs2:
+                show_roll = st.checkbox("Rolling Sharpe", value=True, key="qs_show_roll")
+                show_heat = st.checkbox("Monthly Heatmap", value=False, key="qs_show_heat")
+            
+            try:
+                import matplotlib.pyplot as plt
+                plt.close('all')
+                sr = _qs_prepare_returns(qs_portfolio_returns)
+                br = _qs_prepare_returns(qs_benchmark_series) if qs_benchmark_series is not None else None
+                
+                if show_cum:
+                    st.caption("Cumulative returns (QuantStats)")
+                    try:
+                        qs.plots.returns(sr, benchmark=br, rf=risk_free_rate, show=False)
+                        st.pyplot(plt.gcf(), clear_figure=True, use_container_width=True)
+                    except Exception as _e:
+                        st.warning(f"QuantStats cumulative returns plot failed: {_e}")
+                
+                if show_dd:
+                    st.caption("Drawdown (QuantStats)")
+                    try:
+                        qs.plots.drawdown(sr, show=False)
+                        st.pyplot(plt.gcf(), clear_figure=True, use_container_width=True)
+                    except Exception as _e:
+                        st.warning(f"QuantStats drawdown plot failed: {_e}")
+                
+                if show_roll:
+                    st.caption("Rolling Sharpe (QuantStats)")
+                    try:
+                        qs.plots.rolling_sharpe(sr, rf=risk_free_rate, show=False)
+                        st.pyplot(plt.gcf(), clear_figure=True, use_container_width=True)
+                    except Exception as _e:
+                        st.warning(f"QuantStats rolling sharpe plot failed: {_e}")
+                
+                if show_heat:
+                    st.caption("Monthly returns heatmap (QuantStats)")
+                    try:
+                        qs.plots.monthly_heatmap(sr, show=False)
+                        st.pyplot(plt.gcf(), clear_figure=True, use_container_width=True)
+                    except Exception as _e:
+                        st.warning(f"QuantStats heatmap plot failed: {_e}")
+            except Exception as _e:
+                st.warning(f"Matplotlib/QuantStats plotting failed: {_e}")
+            
+            st.markdown('---')
+            st.markdown("##### QuantStats HTML Tearsheet")
+            if st.button("Generate QuantStats HTML Tearsheet", key="qs_gen_html"):
+                html, err = _qs_generate_html_tearsheet(qs_portfolio_returns, qs_benchmark_series, rf_annual=risk_free_rate,
+                                                        title="BIST Portfolio QuantStats Tearsheet")
+                if err:
+                    st.error(err)
+                else:
+                    st.success("Tearsheet generated.")
+                    st.download_button("Download Tearsheet (HTML)", data=html, file_name="quantstats_tearsheet.html", mime="text/html")
+                    components.html(html, height=950, scrolling=True)
+
     # ── PERFORMANCE ATTRIBUTION ──
     st.markdown("<div class='section-header'>Performance Attribution</div>", unsafe_allow_html=True)
     
@@ -8249,6 +8352,120 @@ HAS_REPORTLAB={HAS_REPORTLAB}
 # ─────────────────────────────────────────────────────────────────────────────
 # APPLICATION ENTRY POINT WITH COMPREHENSIVE ERROR HANDLING
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# QUANTSTATS PERFORMANCE ENGINE (ADVANCED TEARSHEET)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _qs_prepare_returns(r: pd.Series) -> pd.Series:
+    """Prepare a return series for QuantStats: ensure datetime index, tz-naive, sorted, no duplicates."""
+    try:
+        s = pd.Series(r).copy()
+        if not isinstance(s.index, pd.DatetimeIndex):
+            s.index = pd.to_datetime(s.index, errors="coerce")
+        s = s[~s.index.isna()]
+        try:
+            s.index = s.index.tz_localize(None)
+        except Exception:
+            pass
+        s = s[~s.index.duplicated(keep="last")].sort_index()
+        s = s.replace([np.inf, -np.inf], np.nan).dropna()
+        return s
+    except Exception:
+        return pd.Series(dtype=float)
+
+def _qs_metrics_table(strategy_returns: pd.Series,
+                      benchmark_returns: Optional[pd.Series] = None,
+                      rf_annual: float = 0.0) -> pd.DataFrame:
+    """Return a structured metrics table using QuantStats stats."""
+    if not HAS_QUANTSTATS or qs is None:
+        return pd.DataFrame({"Error": ["QuantStats is not available."]})
+
+    sr = _qs_prepare_returns(strategy_returns)
+    br = _qs_prepare_returns(benchmark_returns) if benchmark_returns is not None else None
+
+    if sr.empty or len(sr) < 50:
+        return pd.DataFrame({"Error": [f"Not enough return observations for QuantStats (need ~50+, got {len(sr)})."]})
+
+    try:
+        metrics = []
+
+        def add(section: str, name: str, value: Any):
+            metrics.append({"Section": section, "Metric": name, "Value": value})
+
+        add("Performance", "CAGR", qs.stats.cagr(sr))
+        add("Performance", "Total Return", qs.stats.comp(sr))
+        add("Performance", "Best Day", qs.stats.best(sr))
+        add("Performance", "Worst Day", qs.stats.worst(sr))
+        add("Performance", "Win Rate", qs.stats.win_rate(sr))
+
+        add("Risk", "Volatility (ann.)", qs.stats.volatility(sr, periods=252))
+        add("Risk", "Sharpe", qs.stats.sharpe(sr, rf=rf_annual, periods=252))
+        add("Risk", "Sortino", qs.stats.sortino(sr, rf=rf_annual, periods=252))
+        add("Risk", "Calmar", qs.stats.calmar(sr))
+        add("Risk", "Skew", qs.stats.skew(sr))
+        add("Risk", "Kurtosis", qs.stats.kurtosis(sr))
+        add("Risk", "VaR 95%", qs.stats.var(sr))
+        add("Risk", "CVaR 95%", qs.stats.cvar(sr))
+        add("Risk", "Tail Ratio", qs.stats.tail_ratio(sr))
+        add("Risk", "Ulcer Index", qs.stats.ulcer_index(sr))
+
+        add("Drawdowns", "Max Drawdown", qs.stats.max_drawdown(sr))
+        add("Drawdowns", "Avg Drawdown", qs.stats.avg_drawdown(sr))
+        add("Drawdowns", "Avg Drawdown Days", qs.stats.avg_drawdown_days(sr))
+        add("Drawdowns", "Recovery Factor", qs.stats.recovery_factor(sr))
+
+        if br is not None and not br.empty and len(br) >= 50:
+            common = sr.index.intersection(br.index)
+            sr2 = sr.loc[common]
+            br2 = br.loc[common]
+            if len(common) >= 50:
+                add("Relative", "Alpha", qs.stats.alpha(sr2, br2, rf=rf_annual))
+                add("Relative", "Beta", qs.stats.beta(sr2, br2))
+                add("Relative", "Information Ratio", qs.stats.information_ratio(sr2, br2))
+                add("Relative", "R-Squared", qs.stats.r_squared(sr2, br2))
+                add("Relative", "Tracking Error", qs.stats.tracking_error(sr2, br2))
+                add("Relative", "Correlation", qs.stats.correlation(sr2, br2))
+
+        df = pd.DataFrame(metrics)
+
+        def _fmt(x):
+            try:
+                if isinstance(x, (int, np.integer)):
+                    return f"{int(x)}"
+                if isinstance(x, (float, np.floating)):
+                    return f"{x:.4f}"
+                return str(x)
+            except Exception:
+                return str(x)
+
+        df["Value"] = df["Value"].apply(_fmt)
+        return df
+    except Exception as _e:
+        return pd.DataFrame({"Error": [f"QuantStats metrics failed: {_e}"]})
+
+def _qs_generate_html_tearsheet(strategy_returns: pd.Series,
+                               benchmark_returns: Optional[pd.Series] = None,
+                               rf_annual: float = 0.0,
+                               title: str = "QuantStats Tearsheet") -> Tuple[Optional[str], str]:
+    """Generate an HTML tear sheet using QuantStats; returns (html_str, error_message)."""
+    if not HAS_QUANTSTATS or qs is None:
+        return None, f"QuantStats not available: {QUANTSTATS_IMPORT_ERROR}"
+
+    sr = _qs_prepare_returns(strategy_returns)
+    br = _qs_prepare_returns(benchmark_returns) if benchmark_returns is not None else None
+
+    if sr.empty or len(sr) < 50:
+        return None, f"Not enough data for QuantStats HTML report (need ~50+, got {len(sr)})."
+
+    try:
+        out_path = os.path.join(tempfile.gettempdir(), "quantstats_tearsheet.html")
+        qs.reports.html(sr, benchmark=br, rf=rf_annual, title=title, output=out_path)
+        html = open(out_path, "r", encoding="utf-8", errors="ignore").read()
+        return html, ""
+    except Exception as _e:
+        return None, f"QuantStats HTML generation failed: {_e}"
 
 if __name__ == "__main__":
     try:
