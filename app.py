@@ -58,11 +58,22 @@ warnings.filterwarnings('ignore')
 # ADVANCED IMPORTS
 # ─────────────────────────────────────────────────────────────────────────────
 
-# PyPortfolioOpt Suite
-from pypfopt import expected_returns, risk_models, EfficientFrontier
-from pypfopt import CLA, EfficientCVaR, HRPOpt, EfficientSemivariance
-from pypfopt import objective_functions
-from pypfopt.discrete_allocation import DiscreteAllocation, get_latest_prices
+# PyPortfolioOpt Suite (optional but recommended)
+try:
+    from pypfopt import expected_returns, risk_models, EfficientFrontier
+    from pypfopt import CLA, EfficientCVaR, HRPOpt, EfficientSemivariance
+    from pypfopt import objective_functions
+    from pypfopt.discrete_allocation import DiscreteAllocation, get_latest_prices
+    HAS_PYPFOPT = True
+    PYPFOPT_IMPORT_ERROR = ""
+except Exception as _e:
+    HAS_PYPFOPT = False
+    PYPFOPT_IMPORT_ERROR = str(_e)
+    expected_returns = risk_models = EfficientFrontier = None
+    CLA = EfficientCVaR = HRPOpt = EfficientSemivariance = None
+    objective_functions = None
+    DiscreteAllocation = get_latest_prices = None
+
 
 # Financial Econometrics
 try:
@@ -93,16 +104,13 @@ try:
 except ImportError:
     HAS_XGBOOST = False
 
-try:
-    from tensorflow.keras.models import Sequential, Model
-    from tensorflow.keras.layers import Dense, LSTM, GRU, Dropout, BatchNormalization, Input
-    from tensorflow.keras.optimizers import Adam, RMSprop
-    from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
-    HAS_TENSORFLOW = True
-except Exception:
-    # TensorFlow is optional and often problematic on Streamlit Cloud (binary/CPU feature mismatches).
-    # Catch *all* exceptions (not only ImportError) to prevent hard-crashes during import.
-    HAS_TENSORFLOW = False
+# TensorFlow / LSTM (DISABLED BY DEFAULT for Streamlit Cloud stability)
+# If you want LSTM later, install a compatible TensorFlow build and enable it in a compatible environment.
+HAS_TENSORFLOW = False
+TENSORFLOW_IMPORT_ERROR = "disabled-by-default"
+tf = None
+Sequential = Model = Dense = LSTM = GRU = Dropout = BatchNormalization = Input = None
+Adam = RMSprop = EarlyStopping = ReduceLROnPlateau = None
 
 # Time Series
 from statsmodels.tsa.stattools import adfuller, kpss, coint
@@ -200,11 +208,71 @@ st.set_page_config(
     }
 )
 
+if "DISABLE_CSS" not in st.session_state:
+    # Default to SAFE UI mode on Streamlit Cloud to ensure sidebar readability.
+    # You can re-enable the enterprise theme from the sidebar toggle.
+    st.session_state["DISABLE_CSS"] = True
+
+if "RUN_ANALYSIS" not in st.session_state:
+    st.session_state["RUN_ANALYSIS"] = False
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SAFE UI CSS (always-on): improves sidebar readability and prevents "invisible controls"
+st.markdown(
+    """
+<style>
+/* Wider, scrollable sidebar for dense control panels */
+section[data-testid="stSidebar"] {
+    min-width: 360px !important;
+    width: 380px !important;
+}
+section[data-testid="stSidebar"] > div {
+    overflow-y: auto;
+    padding-bottom: 2.5rem;
+}
+
+/* Labels & help text */
+section[data-testid="stSidebar"] label {
+    font-size: 0.95rem !important;
+    line-height: 1.25rem !important;
+    font-weight: 600 !important;
+}
+section[data-testid="stSidebar"] .stMarkdown,
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] small {
+    font-size: 0.92rem;
+    line-height: 1.25rem;
+}
+
+/* Ensure input text remains visible even if a theme overrides colors */
+section[data-testid="stSidebar"] input,
+section[data-testid="stSidebar"] textarea {
+    color: inherit !important;
+}
+
+/* Compact spacing between controls */
+section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] > div {
+    gap: 0.35rem;
+}
+
+/* Simple fallback styling for section headers when enterprise CSS is disabled */
+.section-header {
+    font-weight: 800;
+    margin-top: 1.0rem;
+    margin-bottom: 0.5rem;
+}
+</style>
+    """,
+    unsafe_allow_html=True
+)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # ENHANCED CUSTOM CSS - PROFESSIONAL ENTERPRISE THEME
 # ─────────────────────────────────────────────────────────────────────────────
 
-st.markdown("""
+if not st.session_state.get("DISABLE_CSS", False):
+    st.markdown("""
 <style>
     /* ── Import Professional Fonts ── */
     @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;700;800&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&family=Roboto+Mono:wght@300;400;500&display=swap');
@@ -349,25 +417,58 @@ st.markdown("""
         background: var(--bg-secondary);
         border-right: 1px solid var(--border);
         box-shadow: var(--shadow-lg);
-        backdrop-filter: blur(10px);
-    
-        min-width: 320px;
-        max-width: 420px;
     }
-    
-    section[data-testid="stSidebar"] .stMarkdown,
-    section[data-testid="stSidebar"] label,
-    section[data-testid="stSidebar"] .stSelectbox label,
-    section[data-testid="stSidebar"] .stNumberInput label,
-    section[data-testid="stSidebar"] .stSlider label {
-        color: var(--text-muted) !important;
+
+    /* High-contrast, readable text */
+    section[data-testid="stSidebar"] .stMarkdown {
+        color: var(--text-secondary) !important;
+    }
+    section[data-testid="stSidebar"] label {
+        color: var(--text-secondary) !important;
         font-family: 'JetBrains Mono', monospace !important;
-        font-size: 0.88rem !important;
-        text-transform: none;
-        letter-spacing: 0.02em;
-        font-weight: 500;
+        font-size: 0.78rem !important;
+        text-transform: uppercase;
+        letter-spacing: 0.10em;
+        font-weight: 600;
     }
-    
+
+    /* Inputs, selects, textareas (prevent "invisible text" on dark themes) */
+    section[data-testid="stSidebar"] input,
+    section[data-testid="stSidebar"] textarea {
+        background: var(--bg-tertiary) !important;
+        color: var(--text-primary) !important;
+        border: 1px solid var(--border) !important;
+        border-radius: var(--radius-md) !important;
+    }
+    section[data-testid="stSidebar"] input::placeholder,
+    section[data-testid="stSidebar"] textarea::placeholder {
+        color: var(--text-muted) !important;
+    }
+
+    section[data-testid="stSidebar"] [data-baseweb="select"] > div {
+        background: var(--bg-tertiary) !important;
+        color: var(--text-primary) !important;
+        border: 1px solid var(--border) !important;
+        border-radius: var(--radius-md) !important;
+    }
+    section[data-testid="stSidebar"] [data-baseweb="select"] svg {
+        fill: var(--text-secondary) !important;
+    }
+    section[data-testid="stSidebar"] [role="listbox"] {
+        background: var(--bg-tertiary) !important;
+        color: var(--text-primary) !important;
+        border: 1px solid var(--border) !important;
+    }
+
+    /* Expanders look like "cards" */
+    section[data-testid="stSidebar"] details {
+        background: rgba(255,255,255,0.03);
+        border: 1px solid var(--border-light);
+        border-radius: var(--radius-md);
+        padding: 0.2rem 0.2rem;
+    }
+
+    /* Buttons */
     section[data-testid="stSidebar"] .stButton > button {
         width: 100%;
         background: var(--gradient-primary);
@@ -376,26 +477,24 @@ st.markdown("""
         border-radius: var(--radius-md);
         padding: var(--space-sm) var(--space-md);
         font-family: 'JetBrains Mono', monospace;
-        font-size: 0.85rem;
+        font-size: 0.78rem;
         letter-spacing: 0.05em;
-        text-transform: none;
-        font-weight: 600;
+        text-transform: uppercase;
+        font-weight: 700;
         transition: all var(--transition-fast);
         box-shadow: var(--shadow-sm);
     }
-    
     section[data-testid="stSidebar"] .stButton > button:hover {
         transform: translateY(-2px);
         box-shadow: var(--shadow-md);
-        opacity: 0.9;
+        opacity: 0.92;
     }
-    
     section[data-testid="stSidebar"] .stButton > button:active {
         transform: translateY(0);
         box-shadow: var(--shadow-sm);
     }
 
-    /* ── Navigation & Tabs ── */
+/* ── Navigation & Tabs ── */
     .stTabs [data-baseweb="tab-list"] {
         gap: var(--space-md);
         background-color: transparent;
@@ -410,7 +509,7 @@ st.markdown("""
         padding: var(--space-sm) var(--space-lg);
         font-family: 'JetBrains Mono', monospace;
         font-size: 0.8rem;
-        text-transform: none;
+        text-transform: uppercase;
         letter-spacing: 0.08em;
         color: var(--text-muted);
         border: 1px solid transparent;
@@ -462,7 +561,7 @@ st.markdown("""
     [data-testid="metric-container"] label {
         font-family: 'JetBrains Mono', monospace !important;
         font-size: 0.7rem !important;
-        text-transform: none;
+        text-transform: uppercase;
         letter-spacing: 0.15em;
         color: var(--text-muted) !important;
         font-weight: 500;
@@ -563,8 +662,8 @@ st.markdown("""
         background-color: var(--bg-tertiary) !important;
         color: var(--text-secondary) !important;
         font-family: 'JetBrains Mono', monospace !important;
-        font-size: 0.88rem !important;
-        text-transform: none;
+        font-size: 0.75rem !important;
+        text-transform: uppercase;
         letter-spacing: 0.05em;
         font-weight: 600;
         padding: var(--space-sm) var(--space-md) !important;
@@ -595,7 +694,7 @@ st.markdown("""
         font-family: 'JetBrains Mono', monospace;
         font-size: 0.8rem;
         letter-spacing: 0.05em;
-        text-transform: none;
+        text-transform: uppercase;
         font-weight: 600;
         transition: all var(--transition-fast);
         box-shadow: var(--shadow-sm);
@@ -866,7 +965,7 @@ st.markdown("""
         gap: var(--space-xs);
         font-family: 'JetBrains Mono', monospace;
         font-size: 0.75rem;
-        text-transform: none;
+        text-transform: uppercase;
         letter-spacing: 0.05em;
         padding: var(--space-xs) var(--space-sm);
         border-radius: var(--radius-full);
@@ -909,7 +1008,7 @@ st.markdown("""
         font-size: 0.7rem;
         font-weight: 600;
         letter-spacing: 0.05em;
-        text-transform: none;
+        text-transform: uppercase;
     }
     
     .badge-primary {
@@ -1355,7 +1454,7 @@ st.markdown("""
     .text-accent-pink { color: var(--accent-pink) !important; }
     .text-accent-orange { color: var(--accent-orange) !important; }
     
-    .fs-xs { font-size: 0.88rem !important; }
+    .fs-xs { font-size: 0.75rem !important; }
     .fs-sm { font-size: 0.875rem !important; }
     .fs-md { font-size: 1rem !important; }
     .fs-lg { font-size: 1.125rem !important; }
@@ -1422,7 +1521,7 @@ st.markdown("""
     .z-index-auto { z-index: auto !important; }
 
 </style>
-""", unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ENUMS & DATA CLASSES
@@ -1582,6 +1681,7 @@ class ReportType(Enum):
     BENCHMARK_REPORT = "benchmark_report"
     CUSTOM_REPORT = "custom_report"
 
+@dataclass
 @dataclass
 class PortfolioConstraints:
     """Data class for portfolio constraints"""
@@ -2817,7 +2917,12 @@ RISK_FREE_RATES = {
     'JPY': 0.01
 }
 
-DEFAULT_RFR = RISK_FREE_RATES.get('TRY', 0.05)
+# Default Risk-Free Rate used across the platform (annual, decimal).
+# In Türkiye-focused BIST analysis, we default to TRY risk-free proxy if provided.
+DEFAULT_RFR = float(os.getenv("DEFAULT_RFR", str(RISK_FREE_RATES.get("TRY", 0.05))))
+# Safety clamp: keep within [0%, 50%] so UI sliders remain stable.
+DEFAULT_RFR = max(0.0, min(DEFAULT_RFR, 0.50))
+
 
 # Transaction cost assumptions
 TRANSACTION_COSTS = {
@@ -3127,7 +3232,7 @@ class AdvancedDataFetcher:
             cache_dir = os.path.join(tempfile.gettempdir(), "bist_cache")
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(exist_ok=True)
-        self.data_sources = ['yahoo_finance']
+        self.data_sources = ['yahoo_finance', 'alpha_vantage', 'google_finance']
         self.max_retries = 3
         self.timeout = 30
         self.session = requests.Session()
@@ -3170,8 +3275,8 @@ class AdvancedDataFetcher:
         except Exception as e:
             logger.warning(f"Failed to save cache: {str(e)}")
     
-    def fetch_from_yahoo_finance(self, tickers: List[str], start_date: str, 
-                                end_date: str) -> Optional[Dict]:
+    def fetch_from_yahoo_finance(self, tickers: List[str], start_date: str,
+                                end_date: str, interval: str = "1d", auto_adjust: bool = True, return_type: str = "simple") -> Optional[Dict]:
         """Fetch data from Yahoo Finance with enhanced error handling"""
         for attempt in range(self.max_retries):
             try:
@@ -3182,80 +3287,93 @@ class AdvancedDataFetcher:
                     tickers,
                     start=start_date,
                     end=end_date,
+                    interval=interval,
                     progress=False,
                     threads=True,
-                    group_by='ticker',
-                    auto_adjust=True,
+                    group_by='column',
+                    auto_adjust=auto_adjust,
                     actions=False
                 )
-                
+
+
+                # Normalize index (timezone, duplicates, sorting) to prevent subtle alignment bugs
+                try:
+                    if getattr(raw_data.index, "tz", None) is not None:
+                        raw_data.index = raw_data.index.tz_localize(None)
+                except Exception:
+                    # If tz handling fails, we continue with raw index
+                    pass
+
+                try:
+                    raw_data = raw_data[~raw_data.index.duplicated(keep="first")].sort_index()
+                except Exception:
+                    pass
+
                 if raw_data.empty:
                     raise ValueError("No data returned from Yahoo Finance")
                 
-                
-                # Process returned columns robustly (yfinance MultiIndex can be (ticker, field) or (field, ticker))
-                prices = pd.DataFrame(index=raw_data.index)
-                volumes = pd.DataFrame(index=raw_data.index)
-
+                # Process multi-index columns (Yahoo can return either orientation depending on group_by):
+                # - group_by="column": ('Close', 'AAPL')  -> field first
+                # - group_by="ticker": ('AAPL', 'Close')  -> ticker first
                 if isinstance(raw_data.columns, pd.MultiIndex):
-                    lvl0 = set(raw_data.columns.get_level_values(0))
-                    lvl1 = set(raw_data.columns.get_level_values(1))
-                    ticker_first = any(t in lvl0 for t in tickers)
-                    ticker_second = any(t in lvl1 for t in tickers)
+                    prices = pd.DataFrame(index=raw_data.index)
+                    volumes = pd.DataFrame(index=raw_data.index)
 
-                    def _pick_field(df, candidates):
-                        for c in candidates:
-                            if c in df.columns:
-                                return c
+                    def _mi_get(df: pd.DataFrame, ticker: str, field: str):
+                        """Safely get a column from a MultiIndex DataFrame in either (ticker, field) or (field, ticker) orientation."""
+                        if (ticker, field) in df.columns:
+                            return df[(ticker, field)]
+                        if (field, ticker) in df.columns:
+                            return df[(field, ticker)]
                         return None
 
                     for ticker in tickers:
-                        ser_price = None
-                        ser_vol = None
+                        # If auto_adjust=True, Yahoo 'Close' is already adjusted.
+                        price_fields = ["Close"] if auto_adjust else ["Adj Close", "Close"]
 
-                        if ticker_first and ticker in lvl0:
-                            df_t = raw_data[ticker]
-                            price_col = _pick_field(df_t, ["Adj Close", "Close"])
-                            if price_col is not None:
-                                ser_price = df_t[price_col]
-                            if "Volume" in df_t.columns:
-                                ser_vol = df_t["Volume"]
+                        s_price = None
+                        for fld in price_fields:
+                            s_price = _mi_get(raw_data, ticker, fld)
+                            if s_price is not None:
+                                break
 
-                        elif ticker_second and ticker in lvl1:
-                            # columns are (field, ticker)
-                            for price_col in ["Adj Close", "Close"]:
-                                if (price_col, ticker) in raw_data.columns:
-                                    ser_price = raw_data[(price_col, ticker)]
-                                    break
-                            if ("Volume", ticker) in raw_data.columns:
-                                ser_vol = raw_data[("Volume", ticker)]
+                        s_vol = _mi_get(raw_data, ticker, "Volume")
 
-                        if ser_price is not None:
-                            prices[ticker] = ser_price
-                        if ser_vol is not None:
-                            volumes[ticker] = ser_vol
+                        if s_price is not None:
+                            # Ensure Series aligned to the raw index (handles edge cases returning arrays/frames)
+                            prices[ticker] = pd.Series(np.asarray(s_price), index=raw_data.index)
+                        if s_vol is not None:
+                            volumes[ticker] = pd.Series(np.asarray(s_vol), index=raw_data.index)
 
+                    # Drop empty columns (tickers Yahoo didn't return / fully missing)
+                    prices = prices.dropna(axis=1, how="all")
+                    volumes = volumes.dropna(axis=1, how="all")
+
+                    if prices.empty:
+                        raise ValueError(
+                            "Yahoo Finance returned a MultiIndex DataFrame but no price columns were extracted. "
+                            "This can happen when tickers are invalid, delisted, or the returned column layout differs."
+                        )
                 else:
                     # Single ticker case
-                    t0 = tickers[0]
-                    if "Adj Close" in raw_data.columns:
-                        prices[t0] = raw_data["Adj Close"]
-                    elif "Close" in raw_data.columns:
-                        prices[t0] = raw_data["Close"]
+                    if 'Adj Close' in raw_data.columns:
+                        prices = raw_data[['Adj Close']].rename(
+                            columns={'Adj Close': tickers[0]}
+                        )
                     else:
-                        raise ValueError("Yahoo Finance response missing Close/Adj Close")
-
-                    if "Volume" in raw_data.columns:
-                        volumes[t0] = raw_data["Volume"]
-
-                if prices.empty:
-                    raise ValueError("Failed to extract price series from Yahoo Finance response")
+                        prices = raw_data[['Close']].rename(
+                            columns={'Close': tickers[0]}
+                        )
+                    volumes = raw_data[['Volume']].rename(
+                        columns={'Volume': tickers[0]}
+                    )
+                
                 # Clean and forward fill data
                 prices = prices.ffill().bfill()
                 volumes = volumes.ffill().bfill()
                 
                 # Calculate returns
-                returns = prices.pct_change().dropna()
+                returns = (prices.pct_change() if return_type == "simple" else np.log(prices / prices.shift(1))).dropna()
                 
                 # Remove tickers with insufficient data
                 min_valid_ratio = 0.7  # At least 70% valid data
@@ -3314,16 +3432,17 @@ class AdvancedDataFetcher:
             logger.error(f"Alpha Vantage failed: {str(e)}")
             return None
     
-    def fetch_benchmark_data(self, benchmark_tickers: List[str], start_date: str, 
-                            end_date: str) -> Optional[Dict]:
+    def fetch_benchmark_data(self, benchmark_tickers: List[str], start_date: str,
+                            end_date: str, interval: str = "1d", auto_adjust: bool = True, return_type: str = "simple") -> Optional[Dict]:
         """Fetch benchmark data"""
         try:
             benchmark_data = yf.download(
                 benchmark_tickers,
                 start=start_date,
                 end=end_date,
+                interval=interval,
                 progress=False,
-                auto_adjust=True
+                auto_adjust=auto_adjust
             )
             
             if benchmark_data.empty:
@@ -3348,7 +3467,7 @@ class AdvancedDataFetcher:
                     )
             
             benchmark_prices = benchmark_prices.ffill().bfill()
-            benchmark_returns = benchmark_prices.pct_change().dropna()
+            benchmark_returns = (benchmark_prices.pct_change() if return_type == "simple" else np.log(benchmark_prices / benchmark_prices.shift(1))).dropna()
             
             return {
                 'prices': benchmark_prices,
@@ -3445,16 +3564,19 @@ class AdvancedDataFetcher:
         return fundamental_data
     
     def fetch_market_data(self, tickers: List[str], benchmark_tickers: List[str],
-                         start_date: str, end_date: str, 
-                         use_cache: bool = True) -> Dict:
+                         start_date: str, end_date: str,
+                         use_cache: bool = True,
+                         interval: str = "1d",
+                         auto_adjust: bool = True,
+                         return_type: str = "simple") -> Dict:
         """
         Main method to fetch all market data with caching and fallbacks
         """
         logger.info(f"Fetching market data for {len(tickers)} tickers")
         
         # Generate cache keys
-        tickers_key = self._get_cache_key(tickers, start_date, end_date, 'yahoo')
-        benchmark_key = self._get_cache_key(benchmark_tickers, start_date, end_date, 'benchmark')
+        tickers_key = self._get_cache_key(tickers, start_date, end_date, f"yahoo_{interval}_{int(auto_adjust)}_{return_type}")
+        benchmark_key = self._get_cache_key(benchmark_tickers, start_date, end_date, f"benchmark_{interval}_{int(auto_adjust)}_{return_type}")
         
         # Try to load from cache
         if use_cache:
@@ -3473,7 +3595,7 @@ class AdvancedDataFetcher:
         # Try different data sources
         for source in self.data_sources:
             if source == 'yahoo_finance':
-                tickers_data = self.fetch_from_yahoo_finance(tickers, start_date, end_date)
+                tickers_data = self.fetch_from_yahoo_finance(tickers, start_date, end_date, interval=interval, auto_adjust=auto_adjust, return_type=return_type)
             elif source == 'alpha_vantage':
                 tickers_data = self.fetch_from_alpha_vantage(tickers, start_date, end_date)
             
@@ -3486,7 +3608,7 @@ class AdvancedDataFetcher:
             tickers_data = self._create_synthetic_data(tickers, start_date, end_date)
         
         # Fetch benchmark data
-        benchmark_data = self.fetch_benchmark_data(benchmark_tickers, start_date, end_date)
+        benchmark_data = self.fetch_benchmark_data(benchmark_tickers, start_date, end_date, interval=interval, auto_adjust=auto_adjust, return_type=return_type)
         
         # Fetch fundamental data
         fundamental_data = self.fetch_fundamental_data(tickers)
@@ -3571,13 +3693,15 @@ class AdvancedDataFetcher:
             L = np.linalg.cholesky(corr_matrix + 1e-6 * np.eye(n_tickers))
         
         # Generate uncorrelated returns
+        # Returns correspond to date_range[1:], so we generate (n_days - 1) observations.
+        n_ret = max(n_days - 1, 1)
         uncorrelated_returns = np.random.normal(
             daily_returns[:, None],
             daily_vols[:, None],
-            (n_tickers, n_days)
+            (n_tickers, n_ret)
         )
-        
-        # Apply correlation
+
+# Apply correlation
         correlated_returns = L @ uncorrelated_returns
         
         # Add autocorrelation and volatility clustering
@@ -3587,7 +3711,7 @@ class AdvancedDataFetcher:
             returns_series = correlated_returns[i]
             
             # Simple volatility clustering simulation
-            for t in range(1, n_days):
+            for t in range(1, n_ret):
                 prev_return = returns_series[t-1]
                 if abs(prev_return) > 2 * vol:
                     # High volatility persists
@@ -3602,19 +3726,32 @@ class AdvancedDataFetcher:
                 # Update return with new volatility
                 correlated_returns[i, t] = np.random.normal(daily_returns[i], vol)
         
-        # Create price series
+        # Create price series (prices include the initial base price at date_range[0])
         base_prices = np.random.uniform(10, 500, n_tickers)
-        prices = base_prices[:, None] * np.exp(np.cumsum(correlated_returns, axis=1))
-        
-        # Create DataFrames
+
+        # Build a price matrix of shape (n_tickers, n_days):
+        # - prices[:, 0] is the initial base price
+        # - prices[:, 1:] apply cumulative returns for date_range[1:]
+        prices = np.zeros((n_tickers, n_days), dtype=float)
+        prices[:, 0] = base_prices
+
+        if n_ret > 0:
+            prices[:, 1:] = base_prices[:, None] * np.exp(np.cumsum(correlated_returns, axis=1))
+
+# Create DataFrames
         price_df = pd.DataFrame(
             prices.T,
             index=date_range,
             columns=tickers
         )
-        # Returns are derived from prices to guarantee perfect index/shape consistency
-        returns_df = price_df.pct_change().dropna()
-# Calculate volumes
+        
+        returns_df = pd.DataFrame(
+            correlated_returns.T,
+            index=date_range[1:],
+            columns=tickers
+        )
+        
+        # Calculate volumes
         volumes = np.random.lognormal(
             mean=np.log(1_000_000),
             sigma=1.0,
@@ -3622,11 +3759,21 @@ class AdvancedDataFetcher:
         )
         
         # Add some volume-price correlation
+        # (returns_df is indexed by date_range[1:], while volume_df spans date_range)
         for i, ticker in enumerate(tickers):
-            price_changes = price_df[ticker].pct_change().abs().fillna(0.0)
-            volumes[:, i] = volumes[:, i] * (1 + 0.5 * price_changes.values)
-        
-        volume_df = pd.DataFrame(
+            price_changes = returns_df[ticker].abs()
+
+            # Build an aligned factor of length n_days (so it matches volumes[:, i])
+            vol_factor = np.ones(n_days, dtype=float)
+            try:
+                vol_factor[1:] = 1.0 + 0.5 * np.asarray(price_changes.values)
+            except Exception:
+                # If anything weird happens, keep factor = 1 (no adjustment)
+                pass
+
+            volumes[:, i] = volumes[:, i] * vol_factor
+
+volume_df = pd.DataFrame(
             volumes,
             index=date_range,
             columns=tickers
@@ -3665,14 +3812,42 @@ class AdvancedPortfolioOptimizer:
         self.n_assets = len(returns.columns)
         self.tickers = returns.columns.tolist()
         
-        # Calculate expected returns and covariance matrix
-        self.mu = expected_returns.mean_historical_return(returns, frequency=252)
-        self.S = risk_models.sample_cov(returns, frequency=252)
+        # Expected returns + covariance matrix (PyPortfolioOpt if available; else pandas fallback)
         
-        # Alternative covariance estimators
-        self.S_ledoit_wolf = risk_models.CovarianceShrinkage(returns).ledoit_wolf()
-        self.S_oracle_approx = risk_models.CovarianceShrinkage(returns).oracle_approximating()
+        if HAS_PYPFOPT:
         
+            self.mu = expected_returns.mean_historical_return(returns, frequency=252)
+        
+            self.S = risk_models.sample_cov(returns, frequency=252)
+
+        
+            # Alternative covariance estimators
+        
+            try:
+        
+                _cs = risk_models.CovarianceShrinkage(returns)
+        
+                self.S_ledoit_wolf = _cs.ledoit_wolf()
+        
+                self.S_oracle_approx = _cs.oracle_approximating()
+        
+            except Exception:
+        
+                self.S_ledoit_wolf = self.S
+        
+                self.S_oracle_approx = self.S
+        
+        else:
+        
+            # Fallback (no PyPortfolioOpt): simple annualized estimates
+        
+            self.mu = returns.mean() * 252
+        
+            self.S = returns.cov() * 252
+        
+            self.S_ledoit_wolf = self.S
+        
+            self.S_oracle_approx = self.S
         logger.info(f"PortfolioOptimizer initialized with {self.n_assets} assets")
     
     def optimize(self, method: OptimizationMethod, 
@@ -3681,6 +3856,13 @@ class AdvancedPortfolioOptimizer:
         Main optimization method with comprehensive error handling
         """
         logger.info(f"Starting optimization with method: {method.value}")
+
+        # If PyPortfolioOpt is not available, fall back to NumPy/SciPy implementations
+
+        if not HAS_PYPFOPT:
+
+            return self._optimize_without_pypfopt(method, parameters)
+
         
         try:
             if method == OptimizationMethod.MAX_SHARPE:
@@ -3716,6 +3898,195 @@ class AdvancedPortfolioOptimizer:
             # Fallback to equal weight
             return self._optimize_equal_weight(parameters)
     
+    # ─────────────────────────────────────────────────────────────────────────
+    # FALLBACK OPTIMIZATION (no PyPortfolioOpt)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _optimize_without_pypfopt(self, method: OptimizationMethod, parameters: OptimizationParameters) -> Dict:
+        """Fallback optimization when PyPortfolioOpt is unavailable.
+
+        This keeps the app runnable even if CVX solvers / PyPortfolioOpt are not installed.
+        Supported fallbacks:
+        - max_sharpe: SLSQP (bounds + sum weights constraint)
+        - min_volatility: SLSQP (bounds + sum weights constraint)
+        - hrp/min_cvar: mapped to risk_parity/min_volatility where appropriate
+        - risk_parity/max_diversification/min_correlation/equal_weight: use existing NumPy/SciPy implementations
+        """
+        try:
+            if method in (OptimizationMethod.MIN_VOLATILITY, OptimizationMethod.MIN_VARIANCE):
+                return self._fallback_min_volatility(parameters)
+
+            if method in (OptimizationMethod.MAX_SHARPE, OptimizationMethod.MAX_SHARPE_WITH_LEVERAGE):
+                return self._fallback_max_sharpe(parameters)
+
+            if method == OptimizationMethod.HRP:
+                # HRP requires PyPortfolioOpt; map to a robust proxy
+                return self._optimize_risk_parity(parameters)
+
+            if method == OptimizationMethod.MIN_CVAR:
+                # CVaR optimization requires LP/QP tooling; fallback to min volatility
+                return self._fallback_min_volatility(parameters)
+
+            # Methods already implemented without PyPortfolioOpt
+            if method == OptimizationMethod.RISK_PARITY:
+                return self._optimize_risk_parity(parameters)
+
+            if method == OptimizationMethod.EQUAL_WEIGHT:
+                return self._optimize_equal_weight(parameters)
+
+            if method == OptimizationMethod.MAX_DIVERSIFICATION:
+                return self._optimize_max_diversification(parameters)
+
+            if method == OptimizationMethod.MIN_CORRELATION:
+                return self._optimize_min_correlation(parameters)
+
+            # Default fallback
+            return self._fallback_max_sharpe(parameters)
+
+        except Exception as e:
+            logger.error(f"Fallback optimization failed: {str(e)}")
+            logger.error(traceback.format_exc())
+            return self._optimize_equal_weight(parameters)
+
+    def _fallback_min_volatility(self, parameters: OptimizationParameters) -> Dict:
+        """Fallback: minimize portfolio variance using SciPy SLSQP."""
+        constraints = parameters.constraints or PortfolioConstraints()
+
+        # Build per-asset bounds (supports overrides)
+        bounds = []
+        for t in self.tickers:
+            lo = constraints.min_weight
+            hi = constraints.max_weight
+            if constraints.min_asset_weight and t in constraints.min_asset_weight:
+                lo = max(lo, float(constraints.min_asset_weight[t]))
+            if constraints.max_asset_weight and t in constraints.max_asset_weight:
+                hi = min(hi, float(constraints.max_asset_weight[t]))
+            bounds.append((lo, hi))
+
+        target_sum = float(getattr(constraints, "target_leverage", 1.0) or 1.0)
+
+        # Objective: portfolio variance
+        S = np.asarray(self.S, dtype=float)
+        # Numerical stabilization (in case covariance is not PSD)
+        S = (S + S.T) / 2.0
+        S = S + np.eye(S.shape[0]) * 1e-10
+
+        def obj(w):
+            w = np.asarray(w, dtype=float)
+            return float(w.T @ S @ w)
+
+        cons = ({'type': 'eq', 'fun': lambda w: np.sum(w) - target_sum},)
+
+        x0 = np.ones(self.n_assets) / self.n_assets
+        x0 = x0 * (target_sum / x0.sum())
+
+        res = minimize(
+            obj,
+            x0,
+            method='SLSQP',
+            bounds=bounds,
+            constraints=cons,
+            options={'maxiter': 2000, 'ftol': 1e-10}
+        )
+
+        if not res.success:
+            raise ValueError(f"Fallback min-vol optimization failed: {res.message}")
+
+        w = np.asarray(res.x, dtype=float)
+        if w.sum() != 0:
+            w = w / w.sum() * target_sum
+
+        weights = {self.tickers[i]: float(w[i]) for i in range(self.n_assets)}
+
+        portfolio_returns = self._calculate_portfolio_returns(weights)
+        metrics = self._calculate_comprehensive_metrics(portfolio_returns, parameters)
+
+        performance = (
+            metrics.annual_return,
+            metrics.annual_volatility,
+            metrics.sharpe_ratio
+        )
+
+        return {
+            'weights': weights,
+            'performance': performance,
+            'metrics': metrics,
+            'method': 'Minimum Volatility (fallback)',
+            'constraints': parameters.constraints,
+            'parameters': parameters
+        }
+
+    def _fallback_max_sharpe(self, parameters: OptimizationParameters) -> Dict:
+        """Fallback: maximize Sharpe ratio using SciPy SLSQP."""
+        constraints = parameters.constraints or PortfolioConstraints()
+        rfr = float(parameters.risk_free_rate or 0.0)
+
+        bounds = []
+        for t in self.tickers:
+            lo = constraints.min_weight
+            hi = constraints.max_weight
+            if constraints.min_asset_weight and t in constraints.min_asset_weight:
+                lo = max(lo, float(constraints.min_asset_weight[t]))
+            if constraints.max_asset_weight and t in constraints.max_asset_weight:
+                hi = min(hi, float(constraints.max_asset_weight[t]))
+            bounds.append((lo, hi))
+
+        target_sum = float(getattr(constraints, "target_leverage", 1.0) or 1.0)
+
+        mu = np.asarray(self.mu, dtype=float).reshape(-1)
+        S = np.asarray(self.S, dtype=float)
+        S = (S + S.T) / 2.0
+        S = S + np.eye(S.shape[0]) * 1e-10
+
+        def neg_sharpe(w):
+            w = np.asarray(w, dtype=float)
+            port_ret = float(mu @ w)
+            port_vol = float(np.sqrt(max(w.T @ S @ w, 1e-16)))
+            sharpe = (port_ret - rfr) / port_vol
+            return -sharpe
+
+        cons = ({'type': 'eq', 'fun': lambda w: np.sum(w) - target_sum},)
+
+        x0 = np.ones(self.n_assets) / self.n_assets
+        x0 = x0 * (target_sum / x0.sum())
+
+        res = minimize(
+            neg_sharpe,
+            x0,
+            method='SLSQP',
+            bounds=bounds,
+            constraints=cons,
+            options={'maxiter': 2000, 'ftol': 1e-10}
+        )
+
+        if not res.success:
+            raise ValueError(f"Fallback max-sharpe optimization failed: {res.message}")
+
+        w = np.asarray(res.x, dtype=float)
+        if w.sum() != 0:
+            w = w / w.sum() * target_sum
+
+        weights = {self.tickers[i]: float(w[i]) for i in range(self.n_assets)}
+
+        portfolio_returns = self._calculate_portfolio_returns(weights)
+        metrics = self._calculate_comprehensive_metrics(portfolio_returns, parameters)
+
+        performance = (
+            metrics.annual_return,
+            metrics.annual_volatility,
+            metrics.sharpe_ratio
+        )
+
+        return {
+            'weights': weights,
+            'performance': performance,
+            'metrics': metrics,
+            'method': 'Max Sharpe Ratio (fallback)',
+            'constraints': parameters.constraints,
+            'parameters': parameters
+        }
+
+
     def _optimize_max_sharpe(self, parameters: OptimizationParameters) -> Dict:
         """Maximize Sharpe ratio with constraints"""
         try:
@@ -6778,108 +7149,188 @@ def main():
             • Pattern Recognition
             """)
     
+    # ── QUICK EXECUTION (MAIN AREA) ──
+    exec_cols = st.columns([1.2, 1.2, 5.0])
+    with exec_cols[0]:
+        if st.button("🚀 Execute", type="primary", use_container_width=True):
+            st.session_state["RUN_ANALYSIS"] = True
+            try:
+                st.rerun()
+            except Exception:
+                st.experimental_rerun()
+    with exec_cols[1]:
+        if st.button("🧹 Reset", use_container_width=True):
+            st.session_state["RUN_ANALYSIS"] = False
+            try:
+                st.rerun()
+            except Exception:
+                st.experimental_rerun()
+    with exec_cols[2]:
+        st.caption("Use the sidebar **Control Panel** to configure tickers/dates/optimization. Then click **Execute**.")
+
     st.markdown("<hr/>", unsafe_allow_html=True)
     
-    # ── SIDEBAR CONFIGURATION ──
+        # ── SIDEBAR CONFIGURATION ──
     with st.sidebar:
-        st.markdown("## ⚙ Platform Configuration")
+        st.markdown("## ⚙ Control Center")
+        st.caption("Adjust settings, then click **Execute**. Heavy computations run only after execution.")
 
-        # ── RUN CONTROL ──
-        if "run_analysis" not in st.session_state:
-            st.session_state.run_analysis = False
-
-        st.markdown("### ▶ Execution")
-        if st.button("▶ RUN ANALYSIS", use_container_width=True):
-            st.session_state.run_analysis = True
-
-        if st.button("⏹ Reset / Change Parameters", use_container_width=True):
-            st.session_state.run_analysis = False
-            st.cache_data.clear()
-            st.rerun()
-
-        st.caption(
-            "Set parameters below, then click **RUN ANALYSIS** to execute. "
-            "This avoids accidental long downloads while you're still adjusting sliders."
+        # Theme troubleshooting toggle (reruns app)
+        disable_css_ui = st.checkbox(
+            "Troubleshooting mode (disable custom theme)",
+            value=st.session_state.get("DISABLE_CSS", False),
+            help="If the sidebar/control panel looks broken, enable this to turn off custom CSS."
         )
+        if disable_css_ui != st.session_state.get("DISABLE_CSS", False):
+            st.session_state["DISABLE_CSS"] = disable_css_ui
+            try:
+                st.rerun()
+            except Exception:
+                st.experimental_rerun()
 
-
-        
-        # Platform Mode Selection
-        st.markdown("<div class='section-header'>Platform Mode</div>", unsafe_allow_html=True)
-        platform_mode = st.selectbox(
-            "Select Platform Mode",
-            options=['Standard Analysis', 'Advanced Optimization', 'Risk Management', 'Research & Development'],
-            help="Choose the analysis mode based on your requirements"
-        )
-        
-        # Date Range
-        col_date1, col_date2 = st.columns(2)
-        with col_date1:
-            start_date = st.date_input(
-                "Start Date",
-                datetime.now() - timedelta(days=365 * 2),
-                key="start_date_main"
+        # Quick execution controls (always visible)
+        exec_c1, exec_c2 = st.columns(2)
+        with exec_c1:
+            run_clicked = st.button(
+                "🚀 Execute",
+                type="primary",
+                use_container_width=True,
+                help="Runs data download, risk metrics, optimization and charts using current sidebar settings."
             )
-        with col_date2:
-            end_date = st.date_input(
-                "End Date",
-                datetime.now(),
-                key="end_date_main"
+        with exec_c2:
+            reset_clicked = st.button(
+                "🧹 Reset",
+                use_container_width=True,
+                help="Stops auto-running heavy computations. You can change settings and execute again."
             )
-        
-        # Asset Selection
-        st.markdown("<div class='section-header'>Asset Selection</div>", unsafe_allow_html=True)
-        
-        # Select tickers from BIST 30
-        selected_tickers = st.multiselect(
-            "Select Assets",
-            options=list(BIST30_TICKERS_DETAILED.keys()),
-            default=list(BIST30_TICKERS_DETAILED.keys())[:10],
-            format_func=lambda x: f"{x} - {BIST30_TICKERS_DETAILED[x].name}",
-            help="Select assets for portfolio construction"
-        )
-        
-        # Benchmark Selection
-        benchmark_tickers = st.multiselect(
-            "Benchmark Index",
-            options=list(BENCHMARK_TICKERS.keys()),
-            default=['XU100.IS'],
-            help="Select benchmark for comparison"
-        )
-        
-        # Risk Parameters
-        st.markdown("<div class='section-header'>Risk Parameters</div>", unsafe_allow_html=True)
-        
-        risk_free_rate = st.slider(
-            "Risk-Free Rate (%)",
-            min_value=0.0,
-            max_value=50.0,
-            value=DEFAULT_RFR * 100,
-            step=0.1,
-            help="Annual risk-free rate for performance calculations"
-        ) / 100
-        
-        # Optimization Method Selection
-        st.markdown("<div class='section-header'>Optimization Method</div>", unsafe_allow_html=True)
-        
-        optimization_method = st.selectbox(
-            "Optimization Algorithm",
-            options=[
-                OptimizationMethod.MAX_SHARPE.value,
-                OptimizationMethod.MIN_VOLATILITY.value,
-                OptimizationMethod.RISK_PARITY.value,
-                OptimizationMethod.HRP.value,
-                OptimizationMethod.EQUAL_WEIGHT.value,
-                OptimizationMethod.MAX_DIVERSIFICATION.value,
-                OptimizationMethod.MIN_CVAR.value
-            ],
-            format_func=lambda x: x.replace('_', ' ').title(),
-            index=0,
-            help="Select portfolio optimization method"
-        )
-        
-        # Advanced Parameters
-        with st.expander("⚡ Advanced Parameters", icon="⚡"):
+
+        if run_clicked:
+            st.session_state["RUN_ANALYSIS"] = True
+        if reset_clicked:
+            st.session_state["RUN_ANALYSIS"] = False
+            try:
+                st.rerun()
+            except Exception:
+                st.experimental_rerun()
+
+        st.divider()
+
+        # Defaults (ensures variables exist even if Streamlit changes tab execution behavior)
+        use_cache = True
+        transaction_cost = TRANSACTION_COSTS.get('commission_fixed', 0.0)
+        mc_simulations = 10000
+        mc_horizon = 10
+        use_garch = False
+        garch_order = 'GARCH(1,1)'
+        use_ml = False
+        ml_model = "Random Forest"
+        report_types = ['HTML', 'Excel']
+        generate_report = False
+
+        # Organize controls to keep the sidebar readable
+        tab_core, tab_adv, tab_reports, tab_env = st.tabs(["Core", "Advanced", "Reports", "Env"])
+
+        with tab_core:
+            st.markdown("### 🧭 Universe & Time")
+
+            platform_mode = st.selectbox(
+                "Platform Mode",
+                options=['Standard Analysis', 'Advanced Optimization', 'Risk Management', 'Research & Development'],
+                help="Choose the analysis mode based on your requirements"
+            )
+
+            col_date1, col_date2 = st.columns(2)
+            with col_date1:
+                start_date = st.date_input(
+                    "Start Date",
+                    datetime.now() - timedelta(days=365 * 2),
+                    key="start_date_main"
+                )
+            with col_date2:
+                end_date = st.date_input(
+                    "End Date",
+                    datetime.now(),
+                    key="end_date_main"
+                )
+
+            st.markdown("### 📡 Market Data")
+
+            data_interval = st.selectbox(
+                "Data Interval",
+                options=["1d", "1h", "30m", "15m", "5m"],
+                index=0,
+                help="Yahoo Finance interval. Intraday intervals have limited history; long ranges auto-fallback to 1d."
+            )
+            return_type = st.selectbox(
+                "Return Type",
+                options=["simple", "log"],
+                index=0,
+                help="Return calculation used throughout the platform."
+            )
+            auto_adjust = st.checkbox(
+                "Use Adjusted Prices (auto_adjust)",
+                value=True,
+                help="If enabled, Yahoo prices are adjusted for splits/dividends when available."
+            )
+
+            # Intraday interval guard (Yahoo limits intraday history)
+            try:
+                _days = (pd.to_datetime(end_date) - pd.to_datetime(start_date)).days
+                if data_interval != "1d" and _days > 59:
+                    st.warning("Intraday intervals have limited history on Yahoo Finance. Falling back to **1d** for this date range.")
+                    data_interval = "1d"
+            except Exception:
+                pass
+
+            st.markdown("### 🧩 Asset Selection")
+
+            selected_tickers = st.multiselect(
+                "Assets",
+                options=list(BIST30_TICKERS_DETAILED.keys()),
+                default=list(BIST30_TICKERS_DETAILED.keys())[:10],
+                format_func=lambda x: f"{x} - {BIST30_TICKERS_DETAILED[x].name}",
+                help="Select assets for portfolio construction"
+            )
+
+            benchmark_tickers = st.multiselect(
+                "Benchmark Index",
+                options=list(BENCHMARK_TICKERS.keys()),
+                default=['XU100.IS'],
+                help="Select benchmark for comparison"
+            )
+
+            st.markdown("### 🧯 Risk & Optimization")
+
+            risk_free_rate = st.slider(
+                "Risk-Free Rate (%)",
+                min_value=0.0,
+                max_value=50.0,
+                value=DEFAULT_RFR * 100,
+                step=0.1,
+                help="Annual risk-free rate for performance calculations"
+            ) / 100
+
+            optimization_method = st.selectbox(
+                "Optimization Algorithm",
+                options=[
+                    OptimizationMethod.MAX_SHARPE.value,
+                    OptimizationMethod.MIN_VOLATILITY.value,
+                    OptimizationMethod.RISK_PARITY.value,
+                    OptimizationMethod.HRP.value,
+                    OptimizationMethod.EQUAL_WEIGHT.value,
+                    OptimizationMethod.MAX_DIVERSIFICATION.value,
+                    OptimizationMethod.MIN_CVAR.value
+                ],
+                format_func=lambda x: x.replace('_', ' ').title(),
+                index=0,
+                help="Select portfolio optimization method"
+            )
+
+            st.caption("Tip: keep **Core** minimal. Use **Advanced** for stress tests / ML / GARCH.")
+
+        with tab_adv:
+            st.markdown("### ⚡ Advanced Parameters")
+
             # Transaction Costs
             st.markdown("**Transaction Costs**")
             transaction_cost = st.slider(
@@ -6889,7 +7340,7 @@ def main():
                 value=TRANSACTION_COSTS['commission_fixed'] * 100,
                 step=0.01
             ) / 100
-            
+
             # Monte Carlo Settings
             st.markdown("**Monte Carlo Simulation**")
             mc_simulations = st.select_slider(
@@ -6903,8 +7354,10 @@ def main():
                 max_value=90,
                 value=10
             )
-            
+
             # GARCH Settings
+            use_garch = False
+            garch_order = 'GARCH(1,1)'
             if HAS_ARCH:
                 st.markdown("**GARCH Volatility**")
                 use_garch = st.checkbox("Enable GARCH Forecasting", value=True)
@@ -6913,41 +7366,81 @@ def main():
                     options=['GARCH(1,1)', 'GARCH(1,2)', 'GARCH(2,1)', 'EGARCH(1,1)'],
                     index=0
                 )
-            
+            else:
+                st.info("GARCH module not available (missing package: `arch`). You can still run all other analytics.")
+
             # Machine Learning Settings
+            use_ml = False
+            ml_model = "Random Forest"
             if HAS_SKLEARN:
                 st.markdown("**Machine Learning**")
                 use_ml = st.checkbox("Enable ML Predictions", value=False)
-                if use_ml:
-                    ml_model = st.selectbox(
-                        "ML Model",
-                        options=['Random Forest', 'XGBoost', 'LSTM', 'Gradient Boosting'],
-                        index=0
-                    )
-        
-        # Data Management
-        st.markdown("<div class='section-header'>Data Management</div>", unsafe_allow_html=True)
-        
-        col_data1, col_data2 = st.columns(2)
-        with col_data1:
-            use_cache = st.checkbox("Use Cache", value=True, help="Cache market data for faster loading")
-        with col_data2:
-            if st.button("🔄 Refresh All Data", use_container_width=True):
-                st.cache_data.clear()
-                st.rerun()
-        
-        # Report Generation
-        st.markdown("<div class='section-header'>Report Generation</div>", unsafe_allow_html=True)
-        
-        report_types = st.multiselect(
-            "Report Formats",
-            options=['HTML', 'Markdown', 'Excel', 'PDF'],
-            default=['HTML', 'Excel'],
-            help="Select report formats to generate"
-        )
-        
-        generate_report = st.button("📊 Generate Comprehensive Report", use_container_width=True)
-    
+
+                ml_options = ['Random Forest', 'Gradient Boosting', 'SVR']
+                if HAS_XGBOOST:
+                    ml_options.insert(1, 'XGBoost')
+                # TensorFlow/LSTM is disabled by default in this build
+                ml_model = st.selectbox("ML Model", options=ml_options, index=0, disabled=not use_ml)
+                if use_ml and ml_model == 'XGBoost' and not HAS_XGBOOST:
+                    st.warning("XGBoost selected but package is missing. Install `xgboost` or choose another model.")
+            else:
+                st.info("ML module not available (missing package: `scikit-learn`).")
+
+            st.divider()
+            st.markdown("### 🗄️ Data Management")
+
+            col_data1, col_data2 = st.columns(2)
+            with col_data1:
+                use_cache = st.checkbox("Use Cache", value=True, help="Cache market data for faster loading")
+            with col_data2:
+                if st.button("🔄 Refresh Cache", use_container_width=True):
+                    try:
+                        st.cache_data.clear()
+                    except Exception:
+                        pass
+                    try:
+                        st.rerun()
+                    except Exception:
+                        st.experimental_rerun()
+
+        with tab_reports:
+            st.markdown("### 📄 Report Generation")
+
+            report_types = st.multiselect(
+                "Report Formats",
+                options=['HTML', 'Markdown', 'Excel', 'PDF'],
+                default=['HTML', 'Excel'],
+                help="Select report formats to generate"
+            )
+
+            generate_report = st.button("📊 Generate Comprehensive Report", use_container_width=True)
+
+        with tab_env:
+            st.markdown("### 🧪 Environment & Diagnostics")
+
+            st.write("**Feature Flags**")
+            st.code(
+                f"""HAS_PYPFOPT={HAS_PYPFOPT}
+HAS_SKLEARN={HAS_SKLEARN}
+HAS_XGBOOST={HAS_XGBOOST}
+HAS_ARCH={HAS_ARCH}
+HAS_REPORTLAB={HAS_REPORTLAB}
+"""
+            )
+
+            if not HAS_PYPFOPT:
+                st.warning("PyPortfolioOpt is not available. Optimization will fall back to a NumPy/SciPy implementation.")
+                if PYPFOPT_IMPORT_ERROR:
+                    st.caption(PYPFOPT_IMPORT_ERROR)
+
+            st.caption("If something looks wrong, switch on **Troubleshooting mode** at the top.")
+
+    # ── GATE HEAVY COMPUTATION ──
+
+    if not st.session_state.get("RUN_ANALYSIS", False):
+        st.info("👈 Use the sidebar **Control Panel** and click **Execute / Run Analysis** to start.")
+        st.stop()
+
     # ── DATA LOADING & PROCESSING ──
     st.markdown("<div class='section-header'>Data Loading & Processing</div>", unsafe_allow_html=True)
     
@@ -6961,13 +7454,6 @@ def main():
         st.warning("⚠️ Please select at least one benchmark for comparison.")
         st.info("Use the sidebar to select benchmark indices.")
         st.stop()
-
-    # ── EXECUTION GATE ──
-    if not st.session_state.get("run_analysis", False):
-        st.info("Configure the parameters in the sidebar, then click **RUN ANALYSIS**.")
-        st.stop()
-
-
     
     # Initialize data fetcher
     data_fetcher = AdvancedDataFetcher()
@@ -6988,7 +7474,10 @@ def main():
                 benchmark_tickers=benchmark_tickers,
                 start_date=str(start_date),
                 end_date=str(end_date),
-                use_cache=use_cache
+                use_cache=use_cache,
+                interval=data_interval,
+                auto_adjust=auto_adjust,
+                return_type=return_type
             )
             
             progress_bar.progress(60)
@@ -7591,7 +8080,7 @@ def main():
         )
     
     # Compliance summary
-    with st.expander("📋 Detailed Compliance Report", icon="📋"):
+    with st.expander("📋 Detailed Compliance Report"):
         st.markdown("##### Regulatory Compliance Status")
         
         compliance_data = []
@@ -7772,8 +8261,8 @@ if __name__ == "__main__":
             missing_packages.append("scikit-learn")
         if not HAS_XGBOOST:
             missing_packages.append("xgboost")
-        if not HAS_TENSORFLOW:
-            missing_packages.append("tensorflow")
+        # TensorFlow/LSTM disabled by default on Streamlit Cloud (optional)
+        # missing_packages.append("tensorflow")
         if not HAS_REPORTLAB:
             missing_packages.append("reportlab")
         
@@ -7806,7 +8295,7 @@ if __name__ == "__main__":
         """)
         
         # Show detailed error in expander
-        with st.expander("🔧 Technical Details & Troubleshooting", icon="🔧"):
+        with st.expander("🔧 Technical Details & Troubleshooting"):
             st.code(traceback.format_exc())
             
             st.markdown("""
