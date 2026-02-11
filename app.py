@@ -4143,7 +4143,22 @@ class AdvancedPortfolioOptimizer:
             
         except Exception as e:
             logger.error(f"Max Sharpe optimization failed: {str(e)}")
-            raise
+            logger.error(traceback.format_exc())
+
+            # CVX solver failures (e.g., OSQPException / cvxpy SolverError) can occur on Streamlit Cloud.
+            # Fall back to a SciPy SLSQP implementation rather than crashing or returning equal-weight.
+            try:
+                logger.warning("Falling back to SciPy SLSQP Max-Sharpe optimization due to solver failure.")
+                return self._fallback_max_sharpe(parameters)
+            except Exception as e2:
+                logger.error(f"Max Sharpe fallback also failed: {str(e2)}")
+                logger.error(traceback.format_exc())
+                return self._optimize_equal_weight(parameters)
+
+
+
+
+
     
     def _optimize_min_volatility(self, parameters: OptimizationParameters) -> Dict:
         """Minimize portfolio volatility"""
@@ -4186,7 +4201,21 @@ class AdvancedPortfolioOptimizer:
             
         except Exception as e:
             logger.error(f"Min Volatility optimization failed: {str(e)}")
-            raise
+            logger.error(traceback.format_exc())
+
+            # Fall back to SciPy SLSQP in case CVX solver fails.
+            try:
+                logger.warning("Falling back to SciPy SLSQP Min-Volatility optimization due to solver failure.")
+                return self._fallback_min_volatility(parameters)
+            except Exception as e2:
+                logger.error(f"Min Volatility fallback also failed: {str(e2)}")
+                logger.error(traceback.format_exc())
+                return self._optimize_equal_weight(parameters)
+
+
+
+
+
     
     def _optimize_max_quadratic_utility(self, parameters: OptimizationParameters) -> Dict:
         """Maximize quadratic utility"""
@@ -5499,25 +5528,85 @@ class AdvancedVisualizationEngine:
                                   risk_free_rate: float) -> go.Figure:
         """Create 3D efficient frontier visualization"""
         
-        # Generate efficient frontier points
+                # Generate efficient frontier points
         cla = CLA(optimizer.mu, optimizer.S)
         frontier_points = cla.efficient_frontier(points=100)
-        
-        # Extract data
-        frontier_returns = [p[0] for p in frontier_points]
-        frontier_volatilities = [p[1] for p in frontier_points]
-        
-        # Calculate Sharpe ratios for frontier
-        frontier_sharpes = [(r - risk_free_rate) / v if v > 0 else 0 
-                           for r, v in zip(frontier_returns, frontier_volatilities)]
-        
+
+        # Robust parsing: PyPortfolioOpt versions may return:
+        # - list of tuples: (return, volatility, weights)
+        # - tuple of arrays: (returns, volatilities, weights)
+        frontier_returns: List[float] = []
+        frontier_volatilities: List[float] = []
+
+        try:
+            if isinstance(frontier_points, tuple) and len(frontier_points) >= 2:
+                fp0 = np.asarray(frontier_points[0], dtype=float).reshape(-1)
+                fp1 = np.asarray(frontier_points[1], dtype=float).reshape(-1)
+
+                # Volatility cannot be negative; use that to infer orientation when possible
+                if np.nanmin(fp0) < 0 and np.nanmin(fp1) >= 0:
+                    rets_arr, vols_arr = fp0, fp1
+                elif np.nanmin(fp1) < 0 and np.nanmin(fp0) >= 0:
+                    rets_arr, vols_arr = fp1, fp0
+                else:
+                    # Common convention: (returns, volatilities, weights)
+                    rets_arr, vols_arr = fp0, fp1
+
+                n = int(min(len(rets_arr), len(vols_arr)))
+                frontier_returns = [float(rets_arr[i]) for i in range(n)]
+                frontier_volatilities = [float(vols_arr[i]) for i in range(n)]
+            else:
+                # Expect list-like of (return, volatility, weights?)
+                for pnt in list(frontier_points):
+                    try:
+                        if isinstance(pnt, dict):
+                            r_raw = pnt.get('return', pnt.get('ret', pnt.get('mu', None)))
+                            v_raw = pnt.get('volatility', pnt.get('vol', pnt.get('sigma', None)))
+                        else:
+                            r_raw = pnt[0]
+                            v_raw = pnt[1]
+                        r = float(np.asarray(r_raw, dtype=float).reshape(-1)[0])
+                        v = float(np.asarray(v_raw, dtype=float).reshape(-1)[0])
+                        frontier_returns.append(r)
+                        frontier_volatilities.append(v)
+                    except Exception:
+                        continue
+        except Exception as e:
+            logger.warning(f"Efficient frontier parsing failed, using safe fallback. Error: {str(e)}")
+            frontier_returns = []
+            frontier_volatilities = []
+
+        # If frontier points are still unavailable, create a simple randomized frontier as a fallback
+        if len(frontier_returns) == 0 or len(frontier_volatilities) == 0:
+            np.random.seed(42)
+            n_samples = 250
+            w = np.random.dirichlet(np.ones(optimizer.n_assets), size=n_samples)
+            mu_vec = np.asarray(optimizer.mu, dtype=float).reshape(-1)
+            S_mat = np.asarray(optimizer.S, dtype=float)
+            rets = w @ mu_vec
+            vols = np.sqrt(np.maximum(np.einsum('ij,jk,ik->i', w, S_mat, w), 1e-16))
+            frontier_returns = [float(x) for x in rets]
+            frontier_volatilities = [float(x) for x in vols]
+
+        rf = float(np.asarray(risk_free_rate, dtype=float).reshape(-1)[0]) if risk_free_rate is not None else 0.0
+
+        # Calculate Sharpe ratios for frontier (safe scalar comparisons)
+        frontier_sharpes: List[float] = []
+        for r, v in zip(frontier_returns, frontier_volatilities):
+            rr = float(np.asarray(r, dtype=float).reshape(-1)[0])
+            vv = float(np.asarray(v, dtype=float).reshape(-1)[0])
+            frontier_sharpes.append((rr - rf) / vv if vv > 0 else 0.0)
+
         # Individual assets
         asset_returns = optimizer.mu.values
-        asset_volatilities = np.sqrt(np.diag(optimizer.S))
-        asset_sharpes = [(r - risk_free_rate) / v if v > 0 else 0 
-                        for r, v in zip(asset_returns, asset_volatilities)]
-        
-        # Create 3D scatter plot
+        asset_volatilities = np.sqrt(np.maximum(np.diag(optimizer.S), 1e-16))
+        asset_sharpes: List[float] = []
+        for r, v in zip(asset_returns, asset_volatilities):
+            rr = float(np.asarray(r, dtype=float).reshape(-1)[0])
+            vv = float(np.asarray(v, dtype=float).reshape(-1)[0])
+            asset_sharpes.append((rr - rf) / vv if vv > 0 else 0.0)
+
+# Create 3D scatter plot
         fig = go.Figure()
         
         # Efficient frontier surface
@@ -7170,14 +7259,14 @@ def main():
     # ── QUICK EXECUTION (MAIN AREA) ──
     exec_cols = st.columns([1.2, 1.2, 5.0])
     with exec_cols[0]:
-        if st.button("🚀 Execute", type="primary", use_container_width=True):
+        if st.button("🚀 Execute", type="primary", width='stretch'):
             st.session_state["RUN_ANALYSIS"] = True
             try:
                 st.rerun()
             except Exception:
                 st.experimental_rerun()
     with exec_cols[1]:
-        if st.button("🧹 Reset", use_container_width=True):
+        if st.button("🧹 Reset", width='stretch'):
             st.session_state["RUN_ANALYSIS"] = False
             try:
                 st.rerun()
@@ -7212,13 +7301,13 @@ def main():
             run_clicked = st.button(
                 "🚀 Execute",
                 type="primary",
-                use_container_width=True,
+                width='stretch',
                 help="Runs data download, risk metrics, optimization and charts using current sidebar settings."
             )
         with exec_c2:
             reset_clicked = st.button(
                 "🧹 Reset",
-                use_container_width=True,
+                width='stretch',
                 help="Stops auto-running heavy computations. You can change settings and execute again."
             )
 
@@ -7411,7 +7500,7 @@ def main():
             with col_data1:
                 use_cache = st.checkbox("Use Cache", value=True, help="Cache market data for faster loading")
             with col_data2:
-                if st.button("🔄 Refresh Cache", use_container_width=True):
+                if st.button("🔄 Refresh Cache", width='stretch'):
                     try:
                         st.cache_data.clear()
                     except Exception:
@@ -7431,7 +7520,7 @@ def main():
                 help="Select report formats to generate"
             )
 
-            generate_report = st.button("📊 Generate Comprehensive Report", use_container_width=True)
+            generate_report = st.button("📊 Generate Comprehensive Report", width='stretch')
 
         with tab_env:
             st.markdown("### 🧪 Environment & Diagnostics")
@@ -7707,7 +7796,7 @@ HAS_REPORTLAB={HAS_REPORTLAB}
         # Display table
         st.dataframe(
             weights_df.style.format({'Weight': '{:.2%}'}),
-            use_container_width=True,
+            width='stretch',
             height=400
         )
         
@@ -7771,7 +7860,7 @@ HAS_REPORTLAB={HAS_REPORTLAB}
                 )
         
         allocation_fig = viz_engine.plot_weight_allocation_advanced(weights, asset_info_dict)
-        st.plotly_chart(allocation_fig, use_container_width=True)
+        st.plotly_chart(allocation_fig, width='stretch')
     
     # ── ADVANCED VISUALIZATIONS ──
     st.markdown("<div class='section-header'>Advanced Visualizations</div>", unsafe_allow_html=True)
@@ -7791,7 +7880,7 @@ HAS_REPORTLAB={HAS_REPORTLAB}
         st.markdown("#### 3D Efficient Frontier Analysis")
         
         frontier_fig = viz_engine.plot_efficient_frontier_3d(optimizer, risk_free_rate)
-        st.plotly_chart(frontier_fig, use_container_width=True)
+        st.plotly_chart(frontier_fig, width='stretch')
         
         # Additional frontier insights
         col_ef1, col_ef2 = st.columns(2)
@@ -7842,7 +7931,7 @@ HAS_REPORTLAB={HAS_REPORTLAB}
             benchmark_series,
             risk_free_rate
         )
-        st.plotly_chart(risk_dashboard_fig, use_container_width=True)
+        st.plotly_chart(risk_dashboard_fig, width='stretch')
     
     with viz_tabs[2]:
         # Monte Carlo Analysis
@@ -7913,7 +8002,7 @@ HAS_REPORTLAB={HAS_REPORTLAB}
         
         # Plot Monte Carlo analysis
         mc_fig = viz_engine.plot_monte_carlo_analysis(mc_results)
-        st.plotly_chart(mc_fig, use_container_width=True)
+        st.plotly_chart(mc_fig, width='stretch')
     
     with viz_tabs[3]:
         # Stress Testing
@@ -7936,7 +8025,7 @@ HAS_REPORTLAB={HAS_REPORTLAB}
                     'VaR 95% (%)': '{:.2f}',
                     'CVaR 95% (%)': '{:.2f}'
                 }),
-                use_container_width=True,
+                width='stretch',
                 height=300
             )
         
@@ -7948,20 +8037,20 @@ HAS_REPORTLAB={HAS_REPORTLAB}
                     'Annual Volatility (%)': '{:.1f}',
                     'Max Drawdown (%)': '{:.1f}'
                 }),
-                use_container_width=True,
+                width='stretch',
                 height=300
             )
         
         # Plot stress test visualization
         stress_fig = viz_engine.plot_stress_test_results(stress_results)
-        st.plotly_chart(stress_fig, use_container_width=True)
+        st.plotly_chart(stress_fig, width='stretch')
     
     with viz_tabs[4]:
         # Correlation Analysis
         st.markdown("#### Asset Correlation Matrix")
         
         correlation_fig = viz_engine.plot_correlation_matrix(returns)
-        st.plotly_chart(correlation_fig, use_container_width=True)
+        st.plotly_chart(correlation_fig, width='stretch')
         
         # Correlation insights
         col_corr1, col_corr2 = st.columns(2)
@@ -8013,7 +8102,7 @@ HAS_REPORTLAB={HAS_REPORTLAB}
                 st.warning(metrics_df["Error"].iloc[0])
             else:
                 st.markdown("##### Key Performance & Risk Ratios (QuantStats)")
-                st.dataframe(metrics_df, use_container_width=True, hide_index=True)
+                st.dataframe(metrics_df, width='stretch', hide_index=True)
             
             st.markdown('---')
             st.markdown("##### QuantStats Advanced Charts")
@@ -8035,7 +8124,7 @@ HAS_REPORTLAB={HAS_REPORTLAB}
                     st.caption("Cumulative returns (QuantStats)")
                     try:
                         qs.plots.returns(sr, benchmark=br, rf=risk_free_rate, show=False)
-                        st.pyplot(plt.gcf(), clear_figure=True, use_container_width=True)
+                        st.pyplot(plt.gcf(), clear_figure=True, width='stretch')
                     except Exception as _e:
                         st.warning(f"QuantStats cumulative returns plot failed: {_e}")
                 
@@ -8043,7 +8132,7 @@ HAS_REPORTLAB={HAS_REPORTLAB}
                     st.caption("Drawdown (QuantStats)")
                     try:
                         qs.plots.drawdown(sr, show=False)
-                        st.pyplot(plt.gcf(), clear_figure=True, use_container_width=True)
+                        st.pyplot(plt.gcf(), clear_figure=True, width='stretch')
                     except Exception as _e:
                         st.warning(f"QuantStats drawdown plot failed: {_e}")
                 
@@ -8051,7 +8140,7 @@ HAS_REPORTLAB={HAS_REPORTLAB}
                     st.caption("Rolling Sharpe (QuantStats)")
                     try:
                         qs.plots.rolling_sharpe(sr, rf=risk_free_rate, show=False)
-                        st.pyplot(plt.gcf(), clear_figure=True, use_container_width=True)
+                        st.pyplot(plt.gcf(), clear_figure=True, width='stretch')
                     except Exception as _e:
                         st.warning(f"QuantStats rolling sharpe plot failed: {_e}")
                 
@@ -8059,7 +8148,7 @@ HAS_REPORTLAB={HAS_REPORTLAB}
                     st.caption("Monthly returns heatmap (QuantStats)")
                     try:
                         qs.plots.monthly_heatmap(sr, show=False)
-                        st.pyplot(plt.gcf(), clear_figure=True, use_container_width=True)
+                        st.pyplot(plt.gcf(), clear_figure=True, width='stretch')
                     except Exception as _e:
                         st.warning(f"QuantStats heatmap plot failed: {_e}")
             except Exception as _e:
@@ -8094,7 +8183,7 @@ HAS_REPORTLAB={HAS_REPORTLAB}
             returns,
             benchmark_series_attr
         )
-        st.plotly_chart(attribution_fig, use_container_width=True)
+        st.plotly_chart(attribution_fig, width='stretch')
     else:
         st.warning("Benchmark data not available for performance attribution.")
     
@@ -8227,7 +8316,7 @@ HAS_REPORTLAB={HAS_REPORTLAB}
                 })
         
         compliance_df = pd.DataFrame(compliance_data)
-        st.dataframe(compliance_df, use_container_width=True)
+        st.dataframe(compliance_df, width='stretch')
     
     # ── REPORT GENERATION ──
     st.markdown("<div class='section-header'>Report Generation</div>", unsafe_allow_html=True)
