@@ -3821,20 +3821,75 @@ class AdvancedPortfolioOptimizer:
     Comprehensive portfolio optimization engine with multiple methods,
     constraints, and advanced features.
     """
+
+    # -------------------------------
+    # Annualization: periods per year
+    # -------------------------------
+    @staticmethod
+    def _interval_to_periods_per_year(interval: str) -> int:
+        """Map Yahoo Finance interval to periods-per-year for annualization.
+        Note: Defaults to 252 for daily data. Intraday uses 390 trading minutes/day.
+        """
+        try:
+            itv = (interval or "1d").strip().lower()
+        except Exception:
+            itv = "1d"
+
+        # Common bar intervals
+        if itv in ("1d", "1day", "day"):
+            return 252
+        if itv in ("1wk", "1w", "week", "weekly"):
+            return 52
+        if itv in ("1mo", "1mth", "month", "monthly"):
+            return 12
+        if itv in ("3mo", "3mth", "quarter", "quarterly"):
+            return 4
+
+        # Intraday: approximate using 390 trading minutes/day (US-style session length)
+        TRADING_MINUTES_PER_DAY = 390
+
+        # Normalize "1h" style and also "60m"
+        if itv in ("1h", "60m", "60min"):
+            minutes = 60
+            return int(round(252 * (TRADING_MINUTES_PER_DAY / minutes)))
+
+        # Minute bars like "30m", "15m", "5m", "90m"
+        if itv.endswith("m") and itv[:-1].isdigit():
+            minutes = int(itv[:-1])
+            if minutes <= 0:
+                return 252
+            return int(round(252 * (TRADING_MINUTES_PER_DAY / minutes)))
+
+        # Hour bars like "2h"
+        if itv.endswith("h") and itv[:-1].isdigit():
+            hours = int(itv[:-1])
+            if hours <= 0:
+                return 252
+            minutes = hours * 60
+            return int(round(252 * (TRADING_MINUTES_PER_DAY / minutes)))
+
+        # Fallback
+        return 252
+
     
-    def __init__(self, returns: pd.DataFrame, risk_free_rate: float = 0.05):
+    def __init__(self, returns: pd.DataFrame, risk_free_rate: float = 0.05, data_interval: str = "1d", periods_per_year: Optional[int] = None):
         self.returns = returns
         self.risk_free_rate = risk_free_rate
         self.n_assets = len(returns.columns)
         self.tickers = returns.columns.tolist()
+        self.data_interval = data_interval
+        self.periods_per_year = int(periods_per_year) if periods_per_year is not None else self._interval_to_periods_per_year(data_interval)
+        if self.periods_per_year <= 0:
+            self.periods_per_year = 252
+
         
         # Expected returns + covariance matrix (PyPortfolioOpt if available; else pandas fallback)
         
         if HAS_PYPFOPT:
         
-            self.mu = expected_returns.mean_historical_return(returns, frequency=252)
+            self.mu = expected_returns.mean_historical_return(returns, frequency=self.periods_per_year, returns_data=True)
         
-            self.S = risk_models.sample_cov(returns, frequency=252)
+            self.S = risk_models.sample_cov(returns, frequency=self.periods_per_year)
 
         
             # Alternative covariance estimators
@@ -3857,9 +3912,9 @@ class AdvancedPortfolioOptimizer:
         
             # Fallback (no PyPortfolioOpt): simple annualized estimates
         
-            self.mu = returns.mean() * 252
+            self.mu = returns.mean() * float(self.periods_per_year)
         
-            self.S = returns.cov() * 252
+            self.S = returns.cov() * float(self.periods_per_year)
         
             self.S_ledoit_wolf = self.S
         
@@ -5699,7 +5754,7 @@ class AdvancedVisualizationEngine:
         
         # Update layout
         fig.update_layout(
-            title=dict(text='3D Efficient Frontier Analysis', **self.title_style),
+            title=dict(text=f"3D Efficient Frontier Analysis (Annualized, {getattr(optimizer, 'periods_per_year', 252)} periods/year)", **self.title_style),
             scene=dict(
                 xaxis_title='Annual Volatility',
                 yaxis_title='Annual Return',
@@ -6261,9 +6316,9 @@ class AdvancedVisualizationEngine:
                     mode='lines',
                     line=dict(
                         color=self.palette['blue'],
-                        width=1,
-                        opacity=0.1
+                        width=1
                     ),
+                    opacity=0.1,
                     showlegend=False,
                     hovertemplate='Path %{customdata}<br>Day: %{x}<br>Return: %{y:.2f}%<extra></extra>',
                     customdata=[idx]
@@ -7678,7 +7733,7 @@ HAS_REPORTLAB={HAS_REPORTLAB}
     st.markdown("<div class='section-header'>Portfolio Optimization</div>", unsafe_allow_html=True)
     
     # Initialize optimizer
-    optimizer = AdvancedPortfolioOptimizer(returns, risk_free_rate)
+    optimizer = AdvancedPortfolioOptimizer(returns, risk_free_rate, data_interval=data_interval)
     
     # Prepare optimization parameters
     opt_params = OptimizationParameters(
