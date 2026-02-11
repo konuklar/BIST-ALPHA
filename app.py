@@ -43,6 +43,7 @@ import logging
 import traceback
 import time
 import math
+import copy
 import zipfile
 import tempfile
 import os
@@ -5521,7 +5522,10 @@ class AdvancedVisualizationEngine:
         self.theme = PLOTLY_THEME
         # Prevent Plotly update_layout(title=...) collisions with theme['title']
         self.theme_no_title = {k: v for k, v in PLOTLY_THEME.items() if k != 'title'}
+        # Prevent Plotly update_layout(legend=...) collisions with theme['legend']
+        self.theme_no_title_no_legend = {k: v for k, v in PLOTLY_THEME.items() if k not in ('title', 'legend')}
         self.title_style = PLOTLY_THEME.get('title', {})
+        self.legend_style = copy.deepcopy(PLOTLY_THEME.get('legend', {}))
         self.palette = PALETTE
         
     def plot_efficient_frontier_3d(self, optimizer: AdvancedPortfolioOptimizer,
@@ -6087,13 +6091,14 @@ class AdvancedVisualizationEngine:
             height=900,
             showlegend=True,
             legend=dict(
+                **self.legend_style,
                 orientation='h',
                 yanchor='bottom',
                 y=1.02,
                 xanchor='right',
                 x=1
             ),
-            **self.theme_no_title
+            **self.theme_no_title_no_legend
         )
         
         # Update axes
@@ -6328,13 +6333,14 @@ class AdvancedVisualizationEngine:
             height=800,
             showlegend=True,
             legend=dict(
+                **self.legend_style,
                 orientation='h',
                 yanchor='bottom',
                 y=1.02,
                 xanchor='right',
                 x=1
             ),
-            **self.theme_no_title
+            **self.theme_no_title_no_legend
         )
         
         # Update axes
@@ -6460,13 +6466,14 @@ class AdvancedVisualizationEngine:
             height=800,
             showlegend=True,
             legend=dict(
+                **self.legend_style,
                 orientation='h',
                 yanchor='bottom',
                 y=1.02,
                 xanchor='right',
                 x=1
             ),
-            **self.theme_no_title
+            **self.theme_no_title_no_legend
         )
         
         # Update axes
@@ -6695,13 +6702,14 @@ class AdvancedVisualizationEngine:
             height=800,
             showlegend=True,
             legend=dict(
+                **self.legend_style,
                 orientation='h',
                 yanchor='bottom',
                 y=1.02,
                 xanchor='right',
                 x=1
             ),
-            **self.theme_no_title
+            **self.theme_no_title_no_legend
         )
         
         # Update axes
