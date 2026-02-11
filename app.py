@@ -3886,28 +3886,94 @@ class AdvancedPortfolioOptimizer:
         # Expected returns + covariance matrix (PyPortfolioOpt if available; else pandas fallback)
         
         if HAS_PYPFOPT:
-        
-            self.mu = expected_returns.mean_historical_return(returns, frequency=self.periods_per_year, returns_data=True)
-        
-            self.S = risk_models.sample_cov(returns, frequency=self.periods_per_year)
 
-        
-            # Alternative covariance estimators
-        
+            # IMPORTANT VALIDATION NOTE
+            # -------------------------
+            # At this point, `returns` is already a returns DataFrame (NOT a price DataFrame).
+            # In PyPortfolioOpt, many risk_models helpers default to treating the input as PRICES,
+            # meaning they would compute returns internally. If we pass a returns DataFrame without
+            # `returns_data=True`, we effectively compute "returns of returns", which inflates the
+            # covariance matrix and makes the "Annual Volatility" axis on the Efficient Frontier
+            # look obviously wrong. We therefore force returns-aware behavior and add sanity checks,
+            # falling back to a clean pandas annualization when needed.
+
+            returns_for_opt = returns.copy()
+
+            # Expected returns (annualized)
             try:
-        
-                _cs = risk_models.CovarianceShrinkage(returns)
-        
-                self.S_ledoit_wolf = _cs.ledoit_wolf()
-        
-                self.S_oracle_approx = _cs.oracle_approximating()
-        
+                self.mu = expected_returns.mean_historical_return(
+                    returns_for_opt, frequency=self.periods_per_year, returns_data=True
+                )
+            except TypeError:
+                # Older PyPortfolioOpt versions may not support `returns_data` here.
+                self.mu = returns_for_opt.mean() * float(self.periods_per_year)
             except Exception:
-        
-                self.S_ledoit_wolf = self.S
-        
-                self.S_oracle_approx = self.S
-        
+                self.mu = returns_for_opt.mean() * float(self.periods_per_year)
+
+            # Sample covariance (annualized)
+            try:
+                self.S = risk_models.sample_cov(
+                    returns_for_opt, frequency=self.periods_per_year, returns_data=True
+                )
+            except TypeError:
+                # If `returns_data` is not supported, do a robust annualization ourselves.
+                self.S = returns_for_opt.cov() * float(self.periods_per_year)
+            except Exception:
+                self.S = returns_for_opt.cov() * float(self.periods_per_year)
+
+            # Sanity check (guard against "returns treated as prices")
+            try:
+                diag_var = np.asarray(np.diag(self.S), dtype=float)
+                med_var = float(np.nanmedian(diag_var)) if diag_var.size else 0.0
+                # If median annual variance is implausibly large, re-compute cleanly.
+                if (not np.isfinite(med_var)) or (med_var > 4.0):  # vol > 200% as a red flag for equity-like assets
+                    self.S = returns_for_opt.cov() * float(self.periods_per_year)
+            except Exception:
+                self.S = returns_for_opt.cov() * float(self.periods_per_year)
+
+            # Alternative covariance estimators (Ledoit-Wolf & Oracle Approximating)
+            self.S_ledoit_wolf = self.S
+            self.S_oracle_approx = self.S
+            try:
+                # Prefer PyPortfolioOpt shrinkage if it can correctly interpret input as returns
+                try:
+                    _cs = risk_models.CovarianceShrinkage(
+                        returns_for_opt, returns_data=True, frequency=self.periods_per_year
+                    )
+                except TypeError:
+                    try:
+                        _cs = risk_models.CovarianceShrinkage(returns_for_opt, returns_data=True)
+                    except TypeError:
+                        _cs = risk_models.CovarianceShrinkage(returns_for_opt)
+
+                self.S_ledoit_wolf = _cs.ledoit_wolf()
+                self.S_oracle_approx = _cs.oracle_approximating()
+
+                # Sanity check shrinkage covariance too
+                diag_var = np.asarray(np.diag(self.S_ledoit_wolf), dtype=float)
+                med_var = float(np.nanmedian(diag_var)) if diag_var.size else 0.0
+                if (not np.isfinite(med_var)) or (med_var > 4.0):
+                    raise ValueError("Shrinkage covariance magnitude looks implausible")
+            except Exception:
+                # sklearn fallback (if available)
+                if HAS_SKLEARN:
+                    try:
+                        lw = LedoitWolf().fit(returns_for_opt.dropna().values)
+                        cov = lw.covariance_
+                        self.S_ledoit_wolf = pd.DataFrame(
+                            cov * float(self.periods_per_year),
+                            index=returns_for_opt.columns,
+                            columns=returns_for_opt.columns
+                        )
+                        self.S_oracle_approx = self.S_ledoit_wolf
+                    except Exception:
+                        self.S_ledoit_wolf = self.S
+                        self.S_oracle_approx = self.S
+                else:
+                    self.S_ledoit_wolf = self.S
+                    self.S_oracle_approx = self.S
+
+
         else:
         
             # Fallback (no PyPortfolioOpt): simple annualized estimates
@@ -7944,6 +8010,41 @@ HAS_REPORTLAB={HAS_REPORTLAB}
         
         frontier_fig = viz_engine.plot_efficient_frontier_3d(optimizer, risk_free_rate)
         st.plotly_chart(frontier_fig, width='stretch')
+
+
+        # Volatility sanity check (annualization consistency)
+        # This helps validate that the "Annual Volatility" axis is computed correctly.
+        with st.expander("🔎 Volatility sanity check (annualization + covariance consistency)", expanded=False):
+            try:
+                ann_factor = int(getattr(optimizer, "periods_per_year", 252) or 252)
+                vol_from_returns = optimizer.returns.std() * np.sqrt(float(ann_factor))
+                try:
+                    cov_diag = np.asarray(np.diag(optimizer.S), dtype=float)
+                    vol_from_cov = pd.Series(np.sqrt(np.maximum(cov_diag, 1e-16)), index=optimizer.returns.columns)
+                except Exception:
+                    vol_from_cov = pd.Series(np.nan, index=optimizer.returns.columns)
+
+                check_df = pd.DataFrame({
+                    "annual_vol_from_returns": vol_from_returns.astype(float),
+                    "annual_vol_from_cov": vol_from_cov.astype(float),
+                })
+                check_df["ratio_cov_to_returns"] = check_df["annual_vol_from_cov"] / check_df["annual_vol_from_returns"].replace(0, np.nan)
+
+                st.caption(
+                    f"Annualization factor used: **{ann_factor} periods/year**. "
+                    "For daily data this should be 252. For intraday it depends on interval."
+                )
+                st.dataframe(
+                    check_df.sort_values("annual_vol_from_cov", ascending=False),
+                    width='stretch'
+                )
+                st.info(
+                    "If the two volatility columns are close (ratios near 1.0), the Efficient Frontier volatility axis is consistent. "
+                    "Large deviations would indicate a covariance/annualization mismatch."
+                )
+            except Exception as _e:
+                st.warning(f"Sanity check failed to run: {_e}")
+
         
         # Additional frontier insights
         col_ef1, col_ef2 = st.columns(2)
