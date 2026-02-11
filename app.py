@@ -3591,16 +3591,19 @@ class AdvancedDataFetcher:
         benchmark_key = self._get_cache_key(benchmark_tickers, start_date, end_date, f"benchmark_{interval}_{int(auto_adjust)}_{return_type}")
         
         # Try to load from cache
+
+        # Try to load from cache
         if use_cache:
             tickers_data = self._load_from_cache(tickers_key)
             benchmark_data = self._load_from_cache(benchmark_key)
-            
-            if tickers_data and benchmark_data:
-                return {
-                    **tickers_data,
-                    'benchmark_data': benchmark_data
-                }
-        
+
+            # SAFE CACHE CHECK: avoid ambiguous truth-value for DataFrame/ndarray
+            if tickers_data is not None and benchmark_data is not None:
+                if isinstance(tickers_data, dict) and isinstance(benchmark_data, dict):
+                    return {
+                        **tickers_data,
+                        'benchmark_data': benchmark_data
+                    }
         # Fetch fresh data
         tickers_data = None
         
@@ -7519,11 +7522,25 @@ HAS_REPORTLAB={HAS_REPORTLAB}
                 """)
                 st.stop()
             
-            # Get benchmark returns
-            if benchmark_data and 'returns' in benchmark_data:
-                benchmark_returns = benchmark_data['returns']
-            else:
-                benchmark_returns = pd.DataFrame()  # Empty fallback
+            # Get benchmark returns (robust: avoid ambiguous truth-value for DataFrame/ndarray)
+            benchmark_returns = pd.DataFrame()
+
+            if isinstance(benchmark_data, dict):
+                _br = benchmark_data.get('returns', None)
+                if isinstance(_br, pd.DataFrame):
+                    benchmark_returns = _br
+                elif isinstance(_br, pd.Series):
+                    benchmark_returns = _br.to_frame(name='benchmark')
+            elif isinstance(benchmark_data, pd.DataFrame):
+                benchmark_returns = benchmark_data
+            elif isinstance(benchmark_data, pd.Series):
+                benchmark_returns = benchmark_data.to_frame(name='benchmark')
+            elif isinstance(benchmark_data, np.ndarray):
+                # Last-resort: wrap ndarray if possible
+                try:
+                    benchmark_returns = pd.DataFrame(benchmark_data, index=returns.index[:len(benchmark_data)])
+                except Exception:
+                    benchmark_returns = pd.DataFrame()
             
             progress_bar.progress(100)
             status_text.text("Data ready!")
