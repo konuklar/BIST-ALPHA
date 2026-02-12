@@ -8729,6 +8729,110 @@ def _qs_prepare_returns(r: pd.Series) -> pd.Series:
     except Exception:
         return pd.Series(dtype=float)
 
+
+def _qs_drawdown_series(sr: pd.Series) -> pd.Series:
+    """
+    Compute drawdown series from returns (compatible with all QuantStats versions).
+    Returns a series of drawdowns (<=0), indexed like sr.
+    """
+    s = _qs_prepare_returns(sr)
+    if s.empty:
+        return pd.Series(dtype=float)
+    try:
+        # Prefer QuantStats helper if present
+        fn = getattr(qs.stats, "to_drawdown_series", None) if (HAS_QUANTSTATS and qs is not None) else None
+        if callable(fn):
+            dd = fn(s)
+            dd = pd.Series(dd).replace([np.inf, -np.inf], np.nan).dropna()
+            if isinstance(dd.index, pd.DatetimeIndex):
+                dd = dd[~dd.index.duplicated(keep="last")].sort_index()
+            return dd
+    except Exception:
+        pass
+    # Manual drawdown
+    equity = (1.0 + s).cumprod()
+    running_max = equity.cummax()
+    dd = equity / running_max - 1.0
+    dd = dd.replace([np.inf, -np.inf], np.nan).dropna()
+    return dd
+
+def _qs_avg_drawdown_fallback(sr: pd.Series) -> float:
+    """
+    Average drawdown (typically negative) computed from drawdown series.
+    Matches QuantStats sign convention (max_drawdown is negative).
+    """
+    dd = _qs_drawdown_series(sr)
+    if dd.empty:
+        return float("nan")
+    dd_neg = dd[dd < 0]
+    if dd_neg.empty:
+        return 0.0
+    return float(dd_neg.mean())
+
+def _qs_avg_drawdown_days_fallback(sr: pd.Series) -> float:
+    """
+    Average drawdown duration in *days* (can be fractional for intraday data).
+    If index is not datetime-like, returns average run length in periods.
+    """
+    dd = _qs_drawdown_series(sr)
+    if dd.empty:
+        return float("nan")
+    in_dd = dd < 0
+    if not in_dd.any():
+        return 0.0
+
+    # If we have datetime index, compute duration using timestamps
+    if isinstance(dd.index, pd.DatetimeIndex):
+        runs = []
+        start = None
+        prev_t = None
+        for t, flag in in_dd.items():
+            if flag and start is None:
+                start = t
+            if (not flag) and start is not None:
+                # drawdown ended at previous timestamp
+                end = prev_t if prev_t is not None else t
+                runs.append((start, end))
+                start = None
+            prev_t = t
+        if start is not None:
+            runs.append((start, prev_t if prev_t is not None else start))
+
+        if not runs:
+            return 0.0
+
+        durations = []
+        for s, e in runs:
+            try:
+                delta = (e - s).total_seconds() / 86400.0
+                # include the start day as ~1 period; keep non-negative
+                durations.append(max(delta, 0.0) + (1.0 / 252.0))
+            except Exception:
+                durations.append(float("nan"))
+        durations = [d for d in durations if np.isfinite(d)]
+        return float(np.mean(durations)) if durations else float("nan")
+
+    # Fallback: average consecutive negative drawdown run length (periods)
+    grp = (in_dd != in_dd.shift()).cumsum()
+    lengths = in_dd.groupby(grp).sum()
+    is_dd_group = in_dd.groupby(grp).first()
+    dd_lengths = lengths[is_dd_group]
+    return float(dd_lengths.mean()) if len(dd_lengths) else 0.0
+
+def _qs_stat(name: str, *args, fallback=None, **kwargs):
+    """
+    Version-safe QuantStats stats call.
+    - If qs.stats.<name> exists, call it.
+    - Otherwise use fallback (callable or value) if provided.
+    """
+    fn = getattr(qs.stats, name, None) if (HAS_QUANTSTATS and qs is not None) else None
+    if callable(fn):
+        return fn(*args, **kwargs)
+    if callable(fallback):
+        return fallback(*args, **kwargs)
+    return fallback
+
+
 def _qs_metrics_table(strategy_returns: pd.Series,
                       benchmark_returns: Optional[pd.Series] = None,
                       rf_annual: float = 0.0) -> pd.DataFrame:
@@ -8766,8 +8870,8 @@ def _qs_metrics_table(strategy_returns: pd.Series,
         add("Risk", "Ulcer Index", qs.stats.ulcer_index(sr))
 
         add("Drawdowns", "Max Drawdown", qs.stats.max_drawdown(sr))
-        add("Drawdowns", "Avg Drawdown", qs.stats.avg_drawdown(sr))
-        add("Drawdowns", "Avg Drawdown Days", qs.stats.avg_drawdown_days(sr))
+        add("Drawdowns", "Avg Drawdown", _qs_stat("avg_drawdown", sr, fallback=_qs_avg_drawdown_fallback))
+        add("Drawdowns", "Avg Drawdown Days", _qs_stat("avg_drawdown_days", sr, fallback=_qs_avg_drawdown_days_fallback))
         add("Drawdowns", "Recovery Factor", qs.stats.recovery_factor(sr))
 
         if br is not None and not br.empty and len(br) >= 50:
