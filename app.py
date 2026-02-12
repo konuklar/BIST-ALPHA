@@ -5519,51 +5519,6 @@ class AdvancedRiskAnalytics:
     def calculate_regulatory_metrics(self, portfolio_returns: pd.Series,
                                     portfolio_value: float = 1_000_000) -> Dict:
         """Calculate regulatory risk metrics"""
-        # Normalize returns series (avoid NaN/inf + boolean ambiguity on arrays)
-        pr = pd.Series(portfolio_returns).replace([np.inf, -np.inf], np.nan).dropna()
-        if pr.empty or len(pr) < 10:
-            # Not enough data to compute stable regulatory metrics; return NaNs without crashing the app.
-            nan = float('nan')
-            return {
-                'value_at_risk': {
-                    'var_95_1d': nan, 'var_95_1d_value': nan,
-                    'var_99_1d': nan, 'var_99_1d_value': nan,
-                    'var_95_10d': nan, 'var_95_10d_value': nan,
-                    'var_99_10d': nan, 'var_99_10d_value': nan
-                },
-                'expected_shortfall': {
-                    'cvar_95_1d': nan, 'cvar_95_1d_value': nan,
-                    'cvar_99_1d': nan, 'cvar_99_1d_value': nan,
-                    'cvar_95_10d': nan, 'cvar_95_10d_value': nan,
-                    'cvar_99_10d': nan, 'cvar_99_10d_value': nan
-                },
-                'drawdown_metrics': {
-                    'max_drawdown': nan, 'max_drawdown_duration': nan,
-                    'avg_drawdown': nan, 'drawdown_frequency': nan
-                },
-                'liquidity_metrics': {
-                    'liquidity_coverage_ratio': nan, 'net_stable_funding_ratio': nan,
-                    'asset_liquidity_score': nan
-                },
-                'stress_testing': {
-                    'stress_loss_2008': nan, 'stress_loss_2020': nan,
-                    'stress_loss_custom': nan
-                },
-                'capital_requirements': {
-                    'market_risk_capital': nan, 'credit_risk_capital': nan,
-                    'operational_risk_capital': nan, 'total_regulatory_capital': nan
-                },
-                'basel_ratios': {
-                    'capital_adequacy_ratio': nan, 'tier1_capital_ratio': nan,
-                    'common_equity_tier1_ratio': nan, 'leverage_ratio': nan
-                },
-                'compliance_metrics': {
-                    'var_limit_exceedances': nan, 'cvar_limit_exceedances': nan,
-                    'max_drawdown_limit': False, 'liquidity_requirement_met': False,
-                    'capital_requirement_met': False, 'stress_test_passed': False
-                }
-            }
-
         
         # Value at Risk metrics
         var_95_1d = np.percentile(portfolio_returns, 5)
@@ -5601,42 +5556,6 @@ class AdvancedRiskAnalytics:
         stress_loss_2020 = portfolio_value * 0.18  # Assumed
         
         # Regulatory capital requirements (simplified)
-        # 10-day horizon scaling (sqrt-time rule).
-        # If returns are intraday, scale by periods-per-day inferred from the DatetimeIndex.
-        def _infer_periods_per_year(idx: pd.Index) -> int:
-            try:
-                if isinstance(idx, pd.DatetimeIndex) and len(idx) >= 3:
-                    # median time step in minutes
-                    dmins = idx.to_series().diff().dropna().median().total_seconds() / 60.0
-                    # Daily data (or coarser)
-                    if dmins >= 60 * 20:
-                        return 252
-                    # Intraday approximations using 390 trading minutes/day
-                    if dmins >= 60:
-                        return int(round(252 * (390.0 / 60.0)))
-                    if dmins >= 30:
-                        return int(round(252 * (390.0 / 30.0)))
-                    if dmins >= 15:
-                        return int(round(252 * (390.0 / 15.0)))
-                    if dmins >= 5:
-                        return int(round(252 * (390.0 / 5.0)))
-            except Exception:
-                pass
-            return 252
-
-        _ppy = _infer_periods_per_year(pr.index)
-        _ppd = _ppy / 252.0  # periods per (trading) day
-        horizon_scale_10d = float(np.sqrt(10.0 * _ppd))
-
-        var_95_10d = var_95_1d * horizon_scale_10d
-        var_99_10d = var_99_1d * horizon_scale_10d
-        var_95_10d_value = var_95_1d_value * horizon_scale_10d
-        var_99_10d_value = var_99_1d_value * horizon_scale_10d
-        cvar_95_10d = cvar_95_1d * horizon_scale_10d
-        cvar_99_10d = cvar_99_1d * horizon_scale_10d
-        cvar_95_10d_value = cvar_95_1d_value * horizon_scale_10d
-        cvar_99_10d_value = cvar_99_1d_value * horizon_scale_10d
-
         market_risk_capital = max(var_99_10d_value * 3, 0)  # 3x multiplier
         credit_risk_capital = portfolio_value * 0.08  # 8% for credit risk
         operational_risk_capital = portfolio_value * 0.15  # 15% for operational risk
@@ -5653,20 +5572,20 @@ class AdvancedRiskAnalytics:
                 'var_95_1d_value': var_95_1d_value,
                 'var_99_1d': var_99_1d,
                 'var_99_1d_value': var_99_1d_value,
-                'var_95_10d': var_95_10d,
-                'var_95_10d_value': var_95_10d_value,
-                'var_99_10d': var_99_10d,
-                'var_99_10d_value': var_99_10d_value
+                'var_95_10d': var_95_1d * np.sqrt(10),
+                'var_95_10d_value': var_95_1d_value * np.sqrt(10),
+                'var_99_10d': var_99_1d * np.sqrt(10),
+                'var_99_10d_value': var_99_1d_value * np.sqrt(10)
             },
             'expected_shortfall': {
                 'cvar_95_1d': cvar_95_1d,
                 'cvar_95_1d_value': cvar_95_1d_value,
                 'cvar_99_1d': cvar_99_1d,
                 'cvar_99_1d_value': cvar_99_1d_value,
-                'cvar_95_10d': cvar_95_10d,
-                'cvar_95_10d_value': cvar_95_10d_value,
-                'cvar_99_10d': cvar_99_10d,
-                'cvar_99_10d_value': cvar_99_10d_value
+                'cvar_95_10d': cvar_95_1d * np.sqrt(10),
+                'cvar_95_10d_value': cvar_95_1d_value * np.sqrt(10),
+                'cvar_99_10d': cvar_99_1d * np.sqrt(10),
+                'cvar_99_10d_value': cvar_99_1d_value * np.sqrt(10)
             },
             'drawdown_metrics': {
                 'max_drawdown': max_dd,
@@ -5701,7 +5620,7 @@ class AdvancedRiskAnalytics:
                 'leverage_ratio': total_regulatory_capital / (portfolio_value * 10)  # Simplified
             },
             'compliance_metrics': {
-                'var_limit_exceedances': len(pr[pr <= var_95_1d]),
+                'var_limit_exceedances': len(portfolio_returns[portfolio_returns <= var_95_1d]),
                 'cvar_limit_exceedances': len(tail_95),
                 'max_drawdown_limit': max_dd <= 0.25,  # 25% limit
                 'liquidity_requirement_met': liquidity_coverage_ratio >= 1.0,
@@ -5713,6 +5632,7 @@ class AdvancedRiskAnalytics:
 # ─────────────────────────────────────────────────────────────────────────────
 # ADVANCED VISUALIZATION ENGINE
 # ─────────────────────────────────────────────────────────────────────────────
+
 class AdvancedVisualizationEngine:
     """
     Comprehensive visualization engine with professional charts,
@@ -8350,7 +8270,14 @@ HAS_REPORTLAB={HAS_REPORTLAB}
                 st.warning(metrics_df["Error"].iloc[0])
             else:
                 st.markdown("##### Key Performance & Risk Ratios (QuantStats)")
-                st.dataframe(metrics_df, width='stretch', hide_index=True)
+                try:
+                    _sty = metrics_df.style.set_properties(**{
+                        "font-size": "0.95rem",
+                        "white-space": "nowrap"
+                    })
+                    st.dataframe(_sty, width='stretch', hide_index=True)
+                except Exception:
+                    st.dataframe(metrics_df, width='stretch', hide_index=True)
             
             st.markdown('---')
             st.markdown("##### QuantStats Advanced Charts")
@@ -8371,7 +8298,7 @@ HAS_REPORTLAB={HAS_REPORTLAB}
                 if show_cum:
                     st.caption("Cumulative returns (QuantStats)")
                     try:
-                        qs.plots.returns(sr, benchmark=br, rf=risk_free_rate, show=False)
+                        _qs_plot_returns(sr, benchmark=br, rf=risk_free_rate, show=False)
                         st.pyplot(plt.gcf(), clear_figure=True, width='stretch')
                     except Exception as _e:
                         st.warning(f"QuantStats cumulative returns plot failed: {_e}")
@@ -8387,7 +8314,7 @@ HAS_REPORTLAB={HAS_REPORTLAB}
                 if show_roll:
                     st.caption("Rolling Sharpe (QuantStats)")
                     try:
-                        qs.plots.rolling_sharpe(sr, rf=risk_free_rate, show=False)
+                        _qs_plot_rolling_sharpe(sr, rf=risk_free_rate, show=False)
                         st.pyplot(plt.gcf(), clear_figure=True, width='stretch')
                     except Exception as _e:
                         st.warning(f"QuantStats rolling sharpe plot failed: {_e}")
@@ -8730,175 +8657,395 @@ def _qs_prepare_returns(r: pd.Series) -> pd.Series:
         return pd.Series(dtype=float)
 
 
-def _qs_drawdown_series(sr: pd.Series) -> pd.Series:
+
+def _qs_periods_per_year_from_index(idx: pd.DatetimeIndex) -> int:
     """
-    Compute drawdown series from returns (compatible with all QuantStats versions).
-    Returns a series of drawdowns (<=0), indexed like sr.
+    Estimate periods per year for annualization.
+    - Daily-ish data -> 252
+    - Intraday -> 252 * (trading_minutes_per_day / minutes_per_bar)
+    Uses a robust median-delta approach.
     """
-    s = _qs_prepare_returns(sr)
-    if s.empty:
-        return pd.Series(dtype=float)
     try:
-        # Prefer QuantStats helper if present
-        fn = getattr(qs.stats, "to_drawdown_series", None) if (HAS_QUANTSTATS and qs is not None) else None
-        if callable(fn):
-            dd = fn(s)
-            dd = pd.Series(dd).replace([np.inf, -np.inf], np.nan).dropna()
-            if isinstance(dd.index, pd.DatetimeIndex):
-                dd = dd[~dd.index.duplicated(keep="last")].sort_index()
-            return dd
+        if idx is None or len(idx) < 3:
+            return 252
+        # Ensure sorted, unique
+        _idx = pd.DatetimeIndex(pd.to_datetime(idx)).sort_values()
+        _idx = _idx[~_idx.duplicated()]
+        if len(_idx) < 3:
+            return 252
+
+        deltas = (_idx[1:] - _idx[:-1]).astype("timedelta64[s]").astype(float)
+        med = float(np.nanmedian(deltas))
+        if not np.isfinite(med) or med <= 0:
+            return 252
+
+        # If median step >= 20 hours, treat as daily/weekly-ish
+        if med >= 20 * 3600:
+            return 252
+
+        # Intraday: approximate using US-style 390 minutes/day (can be tuned if desired)
+        trading_minutes_per_day = 390.0
+        minutes_per_bar = med / 60.0
+        if minutes_per_bar <= 0:
+            return 252
+        ppd = trading_minutes_per_day / minutes_per_bar
+        ppyear = int(round(252.0 * ppd))
+        return int(max(252, min(ppyear, 252 * 24 * 60)))  # clamp to a sane upper bound
     except Exception:
-        pass
-    # Manual drawdown
-    equity = (1.0 + s).cumprod()
-    running_max = equity.cummax()
-    dd = equity / running_max - 1.0
-    dd = dd.replace([np.inf, -np.inf], np.nan).dropna()
+        return 252
+
+
+def _qs_rf_per_period(rf_annual: float, periods_per_year: int) -> float:
+    """Convert annual risk-free rate to per-period (geometric)."""
+    try:
+        p = int(periods_per_year) if periods_per_year else 252
+        if p <= 0:
+            p = 252
+        # Guard against rf <= -1
+        if rf_annual <= -1.0:
+            return -0.999999
+        return (1.0 + float(rf_annual)) ** (1.0 / p) - 1.0
+    except Exception:
+        return 0.0
+
+
+def _qs_drawdown_series(returns: pd.Series) -> pd.Series:
+    """Compute drawdown series from periodic returns."""
+    r = returns.replace([np.inf, -np.inf], np.nan).dropna()
+    if r.empty:
+        return pd.Series(dtype=float)
+    eq = (1.0 + r).cumprod()
+    peak = eq.cummax()
+    dd = eq / peak - 1.0
+    dd.name = "drawdown"
     return dd
 
-def _qs_avg_drawdown_fallback(sr: pd.Series) -> float:
-    """
-    Average drawdown (typically negative) computed from drawdown series.
-    Matches QuantStats sign convention (max_drawdown is negative).
-    """
-    dd = _qs_drawdown_series(sr)
-    if dd.empty:
-        return float("nan")
-    dd_neg = dd[dd < 0]
-    if dd_neg.empty:
-        return 0.0
-    return float(dd_neg.mean())
 
-def _qs_avg_drawdown_days_fallback(sr: pd.Series) -> float:
-    """
-    Average drawdown duration in *days* (can be fractional for intraday data).
-    If index is not datetime-like, returns average run length in periods.
-    """
-    dd = _qs_drawdown_series(sr)
-    if dd.empty:
-        return float("nan")
-    in_dd = dd < 0
-    if not in_dd.any():
-        return 0.0
-
-    # If we have datetime index, compute duration using timestamps
-    if isinstance(dd.index, pd.DatetimeIndex):
-        runs = []
-        start = None
-        prev_t = None
-        for t, flag in in_dd.items():
-            if flag and start is None:
-                start = t
-            if (not flag) and start is not None:
-                # drawdown ended at previous timestamp
-                end = prev_t if prev_t is not None else t
-                runs.append((start, end))
-                start = None
-            prev_t = t
-        if start is not None:
-            runs.append((start, prev_t if prev_t is not None else start))
-
-        if not runs:
+def _qs_avg_drawdown_fallback(returns: pd.Series) -> float:
+    """Average drawdown depth (mean of drawdown values below 0)."""
+    try:
+        dd = _qs_drawdown_series(returns)
+        if dd.empty:
+            return np.nan
+        dds = dd[dd < 0]
+        if dds.empty:
             return 0.0
+        return float(dds.mean())
+    except Exception:
+        return np.nan
 
-        durations = []
-        for s, e in runs:
-            try:
-                delta = (e - s).total_seconds() / 86400.0
-                # include the start day as ~1 period; keep non-negative
-                durations.append(max(delta, 0.0) + (1.0 / 252.0))
-            except Exception:
-                durations.append(float("nan"))
-        durations = [d for d in durations if np.isfinite(d)]
-        return float(np.mean(durations)) if durations else float("nan")
 
-    # Fallback: average consecutive negative drawdown run length (periods)
-    grp = (in_dd != in_dd.shift()).cumsum()
-    lengths = in_dd.groupby(grp).sum()
-    is_dd_group = in_dd.groupby(grp).first()
-    dd_lengths = lengths[is_dd_group]
-    return float(dd_lengths.mean()) if len(dd_lengths) else 0.0
-
-def _qs_stat(name: str, *args, fallback=None, **kwargs):
+def _qs_avg_drawdown_days_fallback(returns: pd.Series) -> float:
     """
-    Version-safe QuantStats stats call.
-    - If qs.stats.<name> exists, call it.
-    - Otherwise use fallback (callable or value) if provided.
+    Average drawdown duration in number of bars (approx days if daily).
+    For intraday, this is average drawdown length in bars.
     """
-    fn = getattr(qs.stats, name, None) if (HAS_QUANTSTATS and qs is not None) else None
-    if callable(fn):
+    try:
+        dd = _qs_drawdown_series(returns)
+        if dd.empty:
+            return np.nan
+        in_dd = (dd < 0).astype(int).values
+        if in_dd.sum() == 0:
+            return 0.0
+        lengths = []
+        run = 0
+        for v in in_dd:
+            if v == 1:
+                run += 1
+            else:
+                if run > 0:
+                    lengths.append(run)
+                    run = 0
+        if run > 0:
+            lengths.append(run)
+        if not lengths:
+            return 0.0
+        return float(np.mean(lengths))
+    except Exception:
+        return np.nan
+
+
+def _qs_alpha_beta_fallback(strategy_returns: pd.Series,
+                            benchmark_returns: pd.Series,
+                            rf_annual: float = 0.0,
+                            periods_per_year: int = 252) -> Tuple[float, float, float]:
+    """
+    CAPM regression on excess returns:
+        (rp - rf) = alpha + beta * (rb - rf) + eps
+    Returns: (alpha_annual, beta, r_squared)
+    """
+    try:
+        sr = strategy_returns.replace([np.inf, -np.inf], np.nan).dropna()
+        br = benchmark_returns.replace([np.inf, -np.inf], np.nan).dropna()
+        common = sr.index.intersection(br.index)
+        if len(common) < 50:
+            return np.nan, np.nan, np.nan
+        sr = sr.loc[common]
+        br = br.loc[common]
+        ppy = int(periods_per_year) if periods_per_year else _qs_periods_per_year_from_index(sr.index)
+
+        rf_p = _qs_rf_per_period(rf_annual, ppy)
+
+        y = (sr - rf_p).astype(float).values
+        x = (br - rf_p).astype(float).values
+
+        vx = np.var(x, ddof=1)
+        if not np.isfinite(vx) or vx <= 1e-16:
+            return np.nan, np.nan, np.nan
+
+        cov = np.cov(x, y, ddof=1)[0, 1]
+        beta = cov / vx
+        alpha_p = float(np.mean(y) - beta * np.mean(x))
+
+        # r^2
+        corr = np.corrcoef(x, y)[0, 1]
+        r2 = float(corr ** 2) if np.isfinite(corr) else np.nan
+
+        alpha_ann = float(alpha_p * ppy)
+        return alpha_ann, float(beta), r2
+    except Exception:
+        return np.nan, np.nan, np.nan
+
+
+def _qs_safe_getattr(obj: Any, name: str):
+    try:
+        return getattr(obj, name)
+    except Exception:
+        return None
+
+
+def _qs_safe_call(fn: Any, *args, fallback: Any = np.nan, retry_without_kwargs: bool = True, **kwargs):
+    """
+    Call a QuantStats function defensively across version differences.
+
+    For *stats* functions we usually want correctness (rf/periods), so we can disable
+    retry_without_kwargs to avoid silently using wrong defaults.
+    For *plot* functions we prefer "render something" and retry without kwargs.
+    """
+    if fn is None:
+        return fallback() if callable(fallback) else fallback
+    try:
         return fn(*args, **kwargs)
-    if callable(fallback):
-        return fallback(*args, **kwargs)
-    return fallback
+    except TypeError:
+        if retry_without_kwargs and kwargs:
+            try:
+                return fn(*args)
+            except Exception:
+                return fallback() if callable(fallback) else fallback
+        return fallback() if callable(fallback) else fallback
+    except AttributeError:
+        return fallback() if callable(fallback) else fallback
+    except Exception:
+        return fallback() if callable(fallback) else fallback
+
+
+def _qs_stats(name: str, *args, fallback: Any = np.nan, **kwargs):
+    fn = _qs_safe_getattr(qs.stats, name) if (HAS_QUANTSTATS and qs is not None) else None
+    # For stats, do NOT retry without kwargs; prefer fallbacks for correctness.
+    return _qs_safe_call(fn, *args, fallback=fallback, retry_without_kwargs=False, **kwargs)
+
+
+def _qs_plot(name: str, *args, fallback: Any = None, **kwargs):
+    fn = _qs_safe_getattr(qs.plots, name) if (HAS_QUANTSTATS and qs is not None) else None
+    # For plots, retry without kwargs to handle version differences (rf not supported etc.).
+    return _qs_safe_call(fn, *args, fallback=fallback, retry_without_kwargs=True, **kwargs)
+
+
+
+def _qs_plot_returns(sr: pd.Series,
+                     benchmark: Optional[pd.Series] = None,
+                     rf: Optional[float] = None,
+                     show: bool = False) -> None:
+    """
+    Version-safe wrapper for qs.plots.returns.
+    Some QuantStats versions do not accept rf=..., so we retry without rf but keep benchmark.
+    """
+    if not HAS_QUANTSTATS or qs is None:
+        raise RuntimeError("QuantStats not available.")
+    try:
+        qs.plots.returns(sr, benchmark=benchmark, rf=rf, show=show)
+        return
+    except TypeError:
+        pass
+    try:
+        qs.plots.returns(sr, benchmark=benchmark, show=show)
+        return
+    except TypeError:
+        pass
+    try:
+        qs.plots.returns(sr, show=show)
+        return
+    except Exception:
+        qs.plots.returns(sr)
+
+
+def _qs_plot_rolling_sharpe(sr: pd.Series,
+                           rf: Optional[float] = None,
+                           show: bool = False) -> None:
+    """Version-safe wrapper for qs.plots.rolling_sharpe (rf kwarg may differ)."""
+    if not HAS_QUANTSTATS or qs is None:
+        raise RuntimeError("QuantStats not available.")
+    try:
+        qs.plots.rolling_sharpe(sr, rf=rf, show=show)
+        return
+    except TypeError:
+        pass
+    try:
+        qs.plots.rolling_sharpe(sr, show=show)
+        return
+    except Exception:
+        qs.plots.rolling_sharpe(sr)
+
+
+def _qs_report_html(strategy_returns: pd.Series,
+                    benchmark_returns: Optional[pd.Series],
+                    rf_annual: float,
+                    title: str,
+                    output_path: str) -> None:
+    """
+    Generate QuantStats HTML report with version-safe rf handling.
+    Some QuantStats versions do not accept rf=... in reports.html.
+    """
+    if not HAS_QUANTSTATS or qs is None:
+        raise RuntimeError("QuantStats not available.")
+    try:
+        qs.reports.html(strategy_returns, benchmark=benchmark_returns, rf=rf_annual, title=title, output=output_path)
+    except TypeError:
+        # Older versions: no rf kwarg
+        qs.reports.html(strategy_returns, benchmark=benchmark_returns, title=title, output=output_path)
 
 
 def _qs_metrics_table(strategy_returns: pd.Series,
                       benchmark_returns: Optional[pd.Series] = None,
                       rf_annual: float = 0.0) -> pd.DataFrame:
-    """Return a structured metrics table using QuantStats stats."""
+    """
+    Return a structured metrics table.
+    - Uses QuantStats where available
+    - Provides robust fallbacks for missing functions (alpha, avg_drawdown, etc.)
+    - Annualization is frequency-aware using the DatetimeIndex.
+    """
     if not HAS_QUANTSTATS or qs is None:
         return pd.DataFrame({"Error": ["QuantStats is not available."]})
 
     sr = _qs_prepare_returns(strategy_returns)
     br = _qs_prepare_returns(benchmark_returns) if benchmark_returns is not None else None
 
+    sr = sr.replace([np.inf, -np.inf], np.nan).dropna()
+    if br is not None:
+        br = br.replace([np.inf, -np.inf], np.nan).dropna()
+
     if sr.empty or len(sr) < 50:
         return pd.DataFrame({"Error": [f"Not enough return observations for QuantStats (need ~50+, got {len(sr)})."]})
 
     try:
-        metrics = []
+        metrics: List[Dict[str, Any]] = []
 
-        def add(section: str, name: str, value: Any):
-            metrics.append({"Section": section, "Metric": name, "Value": value})
+        def add(section: str, name: str, value: Any, kind: str = "ratio"):
+            metrics.append({"Section": section, "Metric": name, "Value": value, "Kind": kind})
 
-        add("Performance", "CAGR", qs.stats.cagr(sr))
-        add("Performance", "Total Return", qs.stats.comp(sr))
-        add("Performance", "Best Day", qs.stats.best(sr))
-        add("Performance", "Worst Day", qs.stats.worst(sr))
-        add("Performance", "Win Rate", qs.stats.win_rate(sr))
+        # Infer annualization
+        ppy = _qs_periods_per_year_from_index(sr.index)
+        rf_p = _qs_rf_per_period(rf_annual, ppy)
 
-        add("Risk", "Volatility (ann.)", qs.stats.volatility(sr, periods=252))
-        add("Risk", "Sharpe", qs.stats.sharpe(sr, rf=rf_annual, periods=252))
-        add("Risk", "Sortino", qs.stats.sortino(sr, rf=rf_annual, periods=252))
-        add("Risk", "Calmar", qs.stats.calmar(sr))
-        add("Risk", "Skew", qs.stats.skew(sr))
-        add("Risk", "Kurtosis", qs.stats.kurtosis(sr))
-        add("Risk", "VaR 95%", qs.stats.var(sr))
-        add("Risk", "CVaR 95%", qs.stats.cvar(sr))
-        add("Risk", "Tail Ratio", qs.stats.tail_ratio(sr))
-        add("Risk", "Ulcer Index", qs.stats.ulcer_index(sr))
+        # ── Core performance computations (version-stable)
+        total_return = float((1.0 + sr).prod() - 1.0)
+        years = (sr.index[-1] - sr.index[0]).days / 365.25 if len(sr.index) > 1 else np.nan
+        cagr = float((1.0 + total_return) ** (1.0 / years) - 1.0) if np.isfinite(years) and years > 0 else np.nan
 
-        add("Drawdowns", "Max Drawdown", qs.stats.max_drawdown(sr))
-        add("Drawdowns", "Avg Drawdown", _qs_stat("avg_drawdown", sr, fallback=_qs_avg_drawdown_fallback))
-        add("Drawdowns", "Avg Drawdown Days", _qs_stat("avg_drawdown_days", sr, fallback=_qs_avg_drawdown_days_fallback))
-        add("Drawdowns", "Recovery Factor", qs.stats.recovery_factor(sr))
+        ann_return = float(sr.mean() * ppy)
+        ann_vol = float(sr.std(ddof=1) * np.sqrt(ppy)) if sr.std(ddof=1) > 0 else np.nan
+        excess_ann_return = float((sr.mean() - rf_p) * ppy)
+        sharpe = float(excess_ann_return / ann_vol) if np.isfinite(ann_vol) and ann_vol > 1e-16 else np.nan
 
+        downside = sr[sr < rf_p]
+        downside_dev = float(downside.std(ddof=1) * np.sqrt(ppy)) if len(downside) > 1 and downside.std(ddof=1) > 0 else np.nan
+        sortino = float(excess_ann_return / downside_dev) if np.isfinite(downside_dev) and downside_dev > 1e-16 else np.nan
+
+        dd = _qs_drawdown_series(sr)
+        max_dd = float(dd.min()) if not dd.empty else np.nan
+
+        # Basic "best/worst day" from periodic bars
+        best = float(sr.max()) if not sr.empty else np.nan
+        worst = float(sr.min()) if not sr.empty else np.nan
+        win_rate = float((sr > 0).mean()) if not sr.empty else np.nan
+
+        # Add core metrics (prefer QuantStats where safe)
+        add("Performance", "CAGR", _qs_stats("cagr", sr, fallback=lambda: cagr), kind="pct")
+        add("Performance", "Total Return", _qs_stats("comp", sr, fallback=lambda: total_return), kind="pct")
+        add("Performance", "Annualized Return", ann_return, kind="pct")
+        add("Performance", "Best Period", _qs_stats("best", sr, fallback=lambda: best), kind="pct")
+        add("Performance", "Worst Period", _qs_stats("worst", sr, fallback=lambda: worst), kind="pct")
+        add("Performance", "Win Rate", _qs_stats("win_rate", sr, fallback=lambda: win_rate), kind="pct")
+
+        # Risk block
+        add("Risk", "Volatility (ann.)", _qs_stats("volatility", sr, periods=ppy, fallback=lambda: ann_vol), kind="pct")
+        add("Risk", "Sharpe", _qs_stats("sharpe", sr, rf=rf_annual, periods=ppy, fallback=lambda: sharpe))
+        add("Risk", "Sortino", _qs_stats("sortino", sr, rf=rf_annual, periods=ppy, fallback=lambda: sortino))
+        add("Risk", "Calmar", _qs_stats("calmar", sr, fallback=lambda: (ann_return / abs(max_dd)) if np.isfinite(max_dd) and max_dd < 0 else np.nan))
+        add("Risk", "Skew", _qs_stats("skew", sr, fallback=lambda: float(sr.skew())))
+        add("Risk", "Kurtosis", _qs_stats("kurtosis", sr, fallback=lambda: float(sr.kurtosis())))
+        add("Risk", "VaR 95%", _qs_stats("var", sr, fallback=lambda: float(np.nanpercentile(sr, 5))), kind="pct")
+        add("Risk", "CVaR 95%", _qs_stats("cvar", sr, fallback=lambda: float(sr[sr <= np.nanpercentile(sr, 5)].mean())), kind="pct")
+        add("Risk", "Tail Ratio", _qs_stats("tail_ratio", sr, fallback=lambda: float(abs(np.nanpercentile(sr, 95) / np.nanpercentile(sr, 5))) if np.nanpercentile(sr, 5) != 0 else np.nan))
+        add("Risk", "Ulcer Index", _qs_stats("ulcer_index", sr, fallback=lambda: float(np.sqrt(np.mean(np.square(dd.clip(upper=0))))) if not dd.empty else np.nan))
+
+        # Drawdowns
+        add("Drawdowns", "Max Drawdown", _qs_stats("max_drawdown", sr, fallback=lambda: max_dd), kind="pct")
+        add("Drawdowns", "Avg Drawdown", _qs_stats("avg_drawdown", sr, fallback=lambda: _qs_avg_drawdown_fallback(sr)), kind="pct")
+        add("Drawdowns", "Avg Drawdown (Bars)", _qs_stats("avg_drawdown_days", sr, fallback=lambda: _qs_avg_drawdown_days_fallback(sr)))
+        add("Drawdowns", "Recovery Factor", _qs_stats("recovery_factor", sr, fallback=lambda: (total_return / abs(max_dd)) if np.isfinite(max_dd) and max_dd < 0 else np.nan))
+
+        # Relative metrics vs benchmark (alpha/beta/IR/TE)
         if br is not None and not br.empty and len(br) >= 50:
             common = sr.index.intersection(br.index)
-            sr2 = sr.loc[common]
-            br2 = br.loc[common]
             if len(common) >= 50:
-                add("Relative", "Alpha", qs.stats.alpha(sr2, br2, rf=rf_annual))
-                add("Relative", "Beta", qs.stats.beta(sr2, br2))
-                add("Relative", "Information Ratio", qs.stats.information_ratio(sr2, br2))
-                add("Relative", "R-Squared", qs.stats.r_squared(sr2, br2))
-                add("Relative", "Tracking Error", qs.stats.tracking_error(sr2, br2))
-                add("Relative", "Correlation", qs.stats.correlation(sr2, br2))
+                sr2 = sr.loc[common]
+                br2 = br.loc[common]
+
+                # alpha/beta/r2 fallback
+                alpha_ann, beta, r2 = _qs_alpha_beta_fallback(sr2, br2, rf_annual=rf_annual, periods_per_year=ppy)
+
+                # Active return based metrics
+                active = (sr2 - br2).dropna()
+                te = float(active.std(ddof=1) * np.sqrt(ppy)) if len(active) > 1 else np.nan
+                ir = float(active.mean() * ppy / te) if np.isfinite(te) and te > 1e-16 else np.nan
+                corr = float(sr2.corr(br2)) if len(sr2) > 1 else np.nan
+
+                add("Relative", "Alpha (ann.)", _qs_stats("alpha", sr2, br2, rf=rf_annual, fallback=lambda: alpha_ann), kind="pct")
+                add("Relative", "Beta", _qs_stats("beta", sr2, br2, fallback=lambda: beta))
+                add("Relative", "Information Ratio", _qs_stats("information_ratio", sr2, br2, fallback=lambda: ir))
+                add("Relative", "R-Squared", _qs_stats("r_squared", sr2, br2, fallback=lambda: r2))
+                add("Relative", "Tracking Error (ann.)", _qs_stats("tracking_error", sr2, br2, fallback=lambda: te), kind="pct")
+                add("Relative", "Correlation", _qs_stats("correlation", sr2, br2, fallback=lambda: corr))
 
         df = pd.DataFrame(metrics)
 
-        def _fmt(x):
-            try:
-                if isinstance(x, (int, np.integer)):
-                    return f"{int(x)}"
-                if isinstance(x, (float, np.floating)):
-                    return f"{x:.4f}"
-                return str(x)
-            except Exception:
-                return str(x)
+        # Professional formatting
+        df["Section"] = df["Section"].astype(str)
+        df["Metric"] = df["Metric"].astype(str)
 
-        df["Value"] = df["Value"].apply(_fmt)
+        def _format_value(val, kind):
+            try:
+                if val is None or (isinstance(val, float) and (not np.isfinite(val))):
+                    return "—"
+                if kind == "pct":
+                    return f"{float(val) * 100.0:.2f}%"
+                # default ratio/number
+                if isinstance(val, (int, np.integer)):
+                    return f"{int(val)}"
+                return f"{float(val):.4f}"
+            except Exception:
+                return str(val)
+
+        df["Value"] = [
+            _format_value(v, k) for v, k in zip(df["Value"].values, df["Kind"].values)
+        ]
+        df = df.drop(columns=["Kind"])
+
+        # Order sections
+        sec_order = {"Performance": 0, "Risk": 1, "Drawdowns": 2, "Relative": 3}
+        df["_ord"] = df["Section"].map(lambda s: sec_order.get(s, 99))
+        df = df.sort_values(["_ord", "Metric"]).drop(columns=["_ord"]).reset_index(drop=True)
         return df
     except Exception as _e:
         return pd.DataFrame({"Error": [f"QuantStats metrics failed: {_e}"]})
@@ -8919,7 +9066,7 @@ def _qs_generate_html_tearsheet(strategy_returns: pd.Series,
 
     try:
         out_path = os.path.join(tempfile.gettempdir(), "quantstats_tearsheet.html")
-        qs.reports.html(sr, benchmark=br, rf=rf_annual, title=title, output=out_path)
+        _qs_report_html(sr, br, rf_annual=rf_annual, title=title, output_path=out_path)
         html = open(out_path, "r", encoding="utf-8", errors="ignore").read()
         return html, ""
     except Exception as _e:
