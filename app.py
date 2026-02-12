@@ -5519,6 +5519,51 @@ class AdvancedRiskAnalytics:
     def calculate_regulatory_metrics(self, portfolio_returns: pd.Series,
                                     portfolio_value: float = 1_000_000) -> Dict:
         """Calculate regulatory risk metrics"""
+        # Normalize returns series (avoid NaN/inf + boolean ambiguity on arrays)
+        pr = pd.Series(portfolio_returns).replace([np.inf, -np.inf], np.nan).dropna()
+        if pr.empty or len(pr) < 10:
+            # Not enough data to compute stable regulatory metrics; return NaNs without crashing the app.
+            nan = float('nan')
+            return {
+                'value_at_risk': {
+                    'var_95_1d': nan, 'var_95_1d_value': nan,
+                    'var_99_1d': nan, 'var_99_1d_value': nan,
+                    'var_95_10d': nan, 'var_95_10d_value': nan,
+                    'var_99_10d': nan, 'var_99_10d_value': nan
+                },
+                'expected_shortfall': {
+                    'cvar_95_1d': nan, 'cvar_95_1d_value': nan,
+                    'cvar_99_1d': nan, 'cvar_99_1d_value': nan,
+                    'cvar_95_10d': nan, 'cvar_95_10d_value': nan,
+                    'cvar_99_10d': nan, 'cvar_99_10d_value': nan
+                },
+                'drawdown_metrics': {
+                    'max_drawdown': nan, 'max_drawdown_duration': nan,
+                    'avg_drawdown': nan, 'drawdown_frequency': nan
+                },
+                'liquidity_metrics': {
+                    'liquidity_coverage_ratio': nan, 'net_stable_funding_ratio': nan,
+                    'asset_liquidity_score': nan
+                },
+                'stress_testing': {
+                    'stress_loss_2008': nan, 'stress_loss_2020': nan,
+                    'stress_loss_custom': nan
+                },
+                'capital_requirements': {
+                    'market_risk_capital': nan, 'credit_risk_capital': nan,
+                    'operational_risk_capital': nan, 'total_regulatory_capital': nan
+                },
+                'basel_ratios': {
+                    'capital_adequacy_ratio': nan, 'tier1_capital_ratio': nan,
+                    'common_equity_tier1_ratio': nan, 'leverage_ratio': nan
+                },
+                'compliance_metrics': {
+                    'var_limit_exceedances': nan, 'cvar_limit_exceedances': nan,
+                    'max_drawdown_limit': False, 'liquidity_requirement_met': False,
+                    'capital_requirement_met': False, 'stress_test_passed': False
+                }
+            }
+
         
         # Value at Risk metrics
         var_95_1d = np.percentile(portfolio_returns, 5)
@@ -5556,6 +5601,42 @@ class AdvancedRiskAnalytics:
         stress_loss_2020 = portfolio_value * 0.18  # Assumed
         
         # Regulatory capital requirements (simplified)
+        # 10-day horizon scaling (sqrt-time rule).
+        # If returns are intraday, scale by periods-per-day inferred from the DatetimeIndex.
+        def _infer_periods_per_year(idx: pd.Index) -> int:
+            try:
+                if isinstance(idx, pd.DatetimeIndex) and len(idx) >= 3:
+                    # median time step in minutes
+                    dmins = idx.to_series().diff().dropna().median().total_seconds() / 60.0
+                    # Daily data (or coarser)
+                    if dmins >= 60 * 20:
+                        return 252
+                    # Intraday approximations using 390 trading minutes/day
+                    if dmins >= 60:
+                        return int(round(252 * (390.0 / 60.0)))
+                    if dmins >= 30:
+                        return int(round(252 * (390.0 / 30.0)))
+                    if dmins >= 15:
+                        return int(round(252 * (390.0 / 15.0)))
+                    if dmins >= 5:
+                        return int(round(252 * (390.0 / 5.0)))
+            except Exception:
+                pass
+            return 252
+
+        _ppy = _infer_periods_per_year(pr.index)
+        _ppd = _ppy / 252.0  # periods per (trading) day
+        horizon_scale_10d = float(np.sqrt(10.0 * _ppd))
+
+        var_95_10d = var_95_1d * horizon_scale_10d
+        var_99_10d = var_99_1d * horizon_scale_10d
+        var_95_10d_value = var_95_1d_value * horizon_scale_10d
+        var_99_10d_value = var_99_1d_value * horizon_scale_10d
+        cvar_95_10d = cvar_95_1d * horizon_scale_10d
+        cvar_99_10d = cvar_99_1d * horizon_scale_10d
+        cvar_95_10d_value = cvar_95_1d_value * horizon_scale_10d
+        cvar_99_10d_value = cvar_99_1d_value * horizon_scale_10d
+
         market_risk_capital = max(var_99_10d_value * 3, 0)  # 3x multiplier
         credit_risk_capital = portfolio_value * 0.08  # 8% for credit risk
         operational_risk_capital = portfolio_value * 0.15  # 15% for operational risk
@@ -5572,20 +5653,20 @@ class AdvancedRiskAnalytics:
                 'var_95_1d_value': var_95_1d_value,
                 'var_99_1d': var_99_1d,
                 'var_99_1d_value': var_99_1d_value,
-                'var_95_10d': var_95_1d * np.sqrt(10),
-                'var_95_10d_value': var_95_1d_value * np.sqrt(10),
-                'var_99_10d': var_99_1d * np.sqrt(10),
-                'var_99_10d_value': var_99_1d_value * np.sqrt(10)
+                'var_95_10d': var_95_10d,
+                'var_95_10d_value': var_95_10d_value,
+                'var_99_10d': var_99_10d,
+                'var_99_10d_value': var_99_10d_value
             },
             'expected_shortfall': {
                 'cvar_95_1d': cvar_95_1d,
                 'cvar_95_1d_value': cvar_95_1d_value,
                 'cvar_99_1d': cvar_99_1d,
                 'cvar_99_1d_value': cvar_99_1d_value,
-                'cvar_95_10d': cvar_95_1d * np.sqrt(10),
-                'cvar_95_10d_value': cvar_95_1d_value * np.sqrt(10),
-                'cvar_99_10d': cvar_99_1d * np.sqrt(10),
-                'cvar_99_10d_value': cvar_99_1d_value * np.sqrt(10)
+                'cvar_95_10d': cvar_95_10d,
+                'cvar_95_10d_value': cvar_95_10d_value,
+                'cvar_99_10d': cvar_99_10d,
+                'cvar_99_10d_value': cvar_99_10d_value
             },
             'drawdown_metrics': {
                 'max_drawdown': max_dd,
@@ -5620,7 +5701,7 @@ class AdvancedRiskAnalytics:
                 'leverage_ratio': total_regulatory_capital / (portfolio_value * 10)  # Simplified
             },
             'compliance_metrics': {
-                'var_limit_exceedances': len(portfolio_returns[portfolio_returns <= var_95_1d]),
+                'var_limit_exceedances': len(pr[pr <= var_95_1d]),
                 'cvar_limit_exceedances': len(tail_95),
                 'max_drawdown_limit': max_dd <= 0.25,  # 25% limit
                 'liquidity_requirement_met': liquidity_coverage_ratio >= 1.0,
@@ -5632,7 +5713,6 @@ class AdvancedRiskAnalytics:
 # ─────────────────────────────────────────────────────────────────────────────
 # ADVANCED VISUALIZATION ENGINE
 # ─────────────────────────────────────────────────────────────────────────────
-
 class AdvancedVisualizationEngine:
     """
     Comprehensive visualization engine with professional charts,
