@@ -5520,7 +5520,31 @@ class AdvancedRiskAnalytics:
                                     portfolio_value: float = 1_000_000) -> Dict:
         """Calculate regulatory risk metrics"""
         
-        # Value at Risk metrics
+                
+        # Safety: clean inputs to avoid NaN/inf percentile failures
+        portfolio_returns = pd.Series(portfolio_returns).replace([np.inf, -np.inf], np.nan).dropna()
+        if len(portfolio_returns) < 5:
+            # Not enough data to compute regulatory metrics reliably
+            nan = float('nan')
+            return {
+                'value_at_risk': {'var_95_1d': nan, 'var_95_1d_value': nan, 'var_99_1d': nan, 'var_99_1d_value': nan,
+                                 'var_95_10d': nan, 'var_95_10d_value': nan, 'var_99_10d': nan, 'var_99_10d_value': nan},
+                'expected_shortfall': {'cvar_95_1d': nan, 'cvar_95_1d_value': nan, 'cvar_99_1d': nan, 'cvar_99_1d_value': nan,
+                                      'cvar_95_10d': nan, 'cvar_95_10d_value': nan, 'cvar_99_10d': nan, 'cvar_99_10d_value': nan},
+                'drawdown_metrics': {'max_drawdown': nan, 'max_drawdown_value': nan, 'avg_drawdown': nan,
+                                    'drawdown_duration_95': nan, 'drawdown_duration_99': nan, 'recovery_time': nan},
+                'liquidity_metrics': {'daily_turnover': nan, 'liquidity_coverage_ratio': nan, 'net_stable_funding_ratio': nan,
+                                     'bid_ask_spread': nan, 'market_impact': nan},
+                'stress_testing': {'stress_loss_2008': nan, 'stress_loss_2020': nan, 'stress_scenario_1': nan,
+                                  'stress_scenario_2': nan, 'stress_scenario_3': nan},
+                'regulatory_capital': {'market_risk_capital': nan, 'credit_risk_capital': nan, 'operational_risk_capital': nan,
+                                      'total_regulatory_capital': nan, 'capital_adequacy_ratio': nan, 'tier1_capital_ratio': nan,
+                                      'common_equity_tier1_ratio': nan, 'leverage_ratio': nan},
+                'compliance_metrics': {'var_limit_exceedances': nan, 'cvar_limit_exceedances': nan, 'max_drawdown_limit': False,
+                                      'liquidity_requirement_met': False, 'capital_requirement_met': False, 'stress_test_passed': False}
+            }
+
+# Value at Risk metrics
         var_95_1d = np.percentile(portfolio_returns, 5)
         var_99_1d = np.percentile(portfolio_returns, 1)
         
@@ -5556,6 +5580,18 @@ class AdvancedRiskAnalytics:
         stress_loss_2020 = portfolio_value * 0.18  # Assumed
         
         # Regulatory capital requirements (simplified)
+        # 10-day horizon scaling (sqrt-time rule; simplified)
+        horizon_scale_10d = np.sqrt(10)
+        var_95_10d = var_95_1d * horizon_scale_10d
+        var_99_10d = var_99_1d * horizon_scale_10d
+        var_95_10d_value = var_95_1d_value * horizon_scale_10d
+        var_99_10d_value = var_99_1d_value * horizon_scale_10d
+
+        cvar_95_10d = cvar_95_1d * horizon_scale_10d
+        cvar_99_10d = cvar_99_1d * horizon_scale_10d
+        cvar_95_10d_value = cvar_95_1d_value * horizon_scale_10d
+        cvar_99_10d_value = cvar_99_1d_value * horizon_scale_10d
+
         market_risk_capital = max(var_99_10d_value * 3, 0)  # 3x multiplier
         credit_risk_capital = portfolio_value * 0.08  # 8% for credit risk
         operational_risk_capital = portfolio_value * 0.15  # 15% for operational risk
@@ -5572,20 +5608,20 @@ class AdvancedRiskAnalytics:
                 'var_95_1d_value': var_95_1d_value,
                 'var_99_1d': var_99_1d,
                 'var_99_1d_value': var_99_1d_value,
-                'var_95_10d': var_95_1d * np.sqrt(10),
-                'var_95_10d_value': var_95_1d_value * np.sqrt(10),
-                'var_99_10d': var_99_1d * np.sqrt(10),
-                'var_99_10d_value': var_99_1d_value * np.sqrt(10)
+                'var_95_10d': var_95_10d,
+                'var_95_10d_value': var_95_10d_value,
+                'var_99_10d': var_99_10d,
+                'var_99_10d_value': var_99_10d_value
             },
             'expected_shortfall': {
                 'cvar_95_1d': cvar_95_1d,
                 'cvar_95_1d_value': cvar_95_1d_value,
                 'cvar_99_1d': cvar_99_1d,
                 'cvar_99_1d_value': cvar_99_1d_value,
-                'cvar_95_10d': cvar_95_1d * np.sqrt(10),
-                'cvar_95_10d_value': cvar_95_1d_value * np.sqrt(10),
-                'cvar_99_10d': cvar_99_1d * np.sqrt(10),
-                'cvar_99_10d_value': cvar_99_1d_value * np.sqrt(10)
+                'cvar_95_10d': cvar_95_10d,
+                'cvar_95_10d_value': cvar_95_10d_value,
+                'cvar_99_10d': cvar_99_10d,
+                'cvar_99_10d_value': cvar_99_10d_value
             },
             'drawdown_metrics': {
                 'max_drawdown': max_dd,
