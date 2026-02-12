@@ -6708,6 +6708,10 @@ class AdvancedVisualizationEngine:
         # Create subplots
         fig = make_subplots(
             rows=2, cols=2,
+            specs=[
+                [{'type': 'xy'}, {'type': 'xy'}],
+                [{'type': 'xy'}, {'type': 'domain'}]
+            ],
             subplot_titles=(
                 'Return Contribution by Asset',
                 'Active Returns vs Benchmark',
